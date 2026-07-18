@@ -1,0 +1,26 @@
+{
+  "name": "admission-results-auto-checker",
+  "version": "1.0.0",
+  "description": "江西省高考录取结果自动查询工具 - 定时查询jxcf.jxeea.cn录取结果",
+  "main": "auto-checker.js",
+  "scripts": {
+    "start": "node auto-checker.js",
+    "manual": "node auto-checker.js --headed",
+    "once": "node auto-checker.js --once",
+    "once-manual": "node auto-checker.js --headed --once",
+    "interval:5": "node auto-checker.js --interval=5",
+    "interval:15": "node auto-checker.js --interval=15",
+    "interval:30": "node auto-checker.js --interval=30"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "lz-string": "^1.5.0",
+    "nodemailer": "^9.0.3",
+    "playwright": "^1.61.1",
+    "sharp": "^0.35.3",
+    "tesseract.js": "^5.1.1"
+  }
+}
