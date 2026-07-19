@@ -235,7 +235,7 @@ async function sendTestEmail(queryResult) {
   
   if (!mailTransporter) initMailer();
   
-  const nameMatch = queryResult.html ? queryResult.html.match(/<span class="kname">([^<]+)<\/span>/) : null;
+  const nameMatch = queryResult.html ? queryResult.html.match(/<span class="kname">([^<]+)<\/span>/) : null; // 见 extractStudentName()
   const studentName = nameMatch ? nameMatch[1].trim() : "未知";
   const statusText = queryResult.found ? "已录取" : (queryResult.message || "查询成功");
   
@@ -403,7 +403,7 @@ let ddddocrAvailable = null;  // null=未检测, true=可用, false=不可用
 /**
  * 调用 ddddocr（Python）识别验证码，返回结果或 null
  */
-async function ocrViaDdddocr(imagePath) {
+function ocrViaDdddocr(imagePath) {
   if (ddddocrAvailable === false) return null;
   
   // 最多重试3次（应对 Python 偶尔超时等瞬时故障）
@@ -420,7 +420,7 @@ async function ocrViaDdddocr(imagePath) {
       ddddocrAvailable = true;
       return result;
     }
-      return null;
+    // 格式不对（非4位字母数字），继续重试
     } catch (e) {
       if (attempt === 2) {
         if (ddddocrAvailable === null) {

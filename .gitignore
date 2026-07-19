@@ -11,3 +11,6 @@ session_cookies.json
 config.json
 .email_tested
 test_captcha.jpg
+
+__pycache__/
+*.pyc
