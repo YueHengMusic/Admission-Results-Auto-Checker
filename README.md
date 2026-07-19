@@ -1,29 +1,33 @@
 # 江西省高考录取结果自动查询工具
 
-定时查询 [江西省教育考试院](https://jxcf.jxeea.cn/) 的高考录取结果，检测到录取信息时自动响铃提醒并保存截图。
+定时查询 [江西省教育考试院](https://jxcf.jxeea.cn/) 的高考录取结果，检测到录取信息时自动弹窗、发邮件、保存截图。
 
 ---
 
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
+# 方式一：一键部署（推荐）
+#  Windows: 双击 setup.bat
+#  macOS/Linux: bash setup.sh
+
+# 方式二：手动安装
 npm install
 
-# 2. 编辑 config.json，填好你的准考证号和身份证后4位
+# 2. 安装 Python 验证码识别引擎（必须！）
+pip install ddddocr
+
+# 3. 编辑 config.json，填好你的准考证号和身份证后4位
 #    （如果 config.json 不存在，会自动从 config.example.json 创建）
 
-# 3.（可选）在 config.json 中配置 SMTP 邮件通知
+# 4.（可选）在 config.json 中配置 SMTP 邮件通知
 
-# 4. 推荐：手动模式（打开浏览器，你只需输验证码，之后全自动）
-npm run manual
-
-# 5. 或：自动模式（OCR 识别验证码，完全无人值守）
+# 5. 启动！完全无人值守
 npm start
 ```
 
-> **前置条件**：需要系统已安装 Google Chrome 浏览器。
-> **邮件通知**：可选功能，不配置也能正常使用（响铃 + 截图仍然有效）。
+> **前置条件**：需要系统已安装 Node.js 和 Python 3。Chrome 可选（程序会自动回退 Playwright 内置 Chromium）。
+> **邮件通知**：可选功能，不配置也能正常使用（弹窗 + 截图仍然有效）。
 
 ---
 
@@ -37,9 +41,14 @@ npm start
 
 ```json
 {
-  "examNumber": "51078304618",
-  "idLast4": "0056",
+  "examNumber": "12345678901",
+  "idLast4": "1234",
   "checkIntervalMinutes": 10,
+  "maxCaptchaRefetches": 5,
+  "maxCandidatesPerCaptcha": 4,
+  "candidateDelayMs": 3000,
+  "captchaRefetchDelayMs": 5000,
+  "headless": true,
 
   "smtp": {
     "enabled": false,
@@ -58,34 +67,23 @@ npm start
 
 > `config.json` 已被 `.gitignore` 忽略，不会提交到 git，保护你的隐私。
 
-## 两种运行模式
+## 运行方式
 
-| 模式 | 命令 | 说明 |
-|------|------|------|
-| **手动模式（推荐）** | `npm run manual` | 打开可见浏览器，预填表单，你只需输验证码点击查询。之后工具接管，定时刷新页面 |
-| **自动模式** | `npm start` | 完全无人值守，使用 tesseract.js OCR 自动识别验证码。会多次重试以保证成功率 |
+| 命令 | 说明 |
+|------|------|
+| `npm start` | 后台静默运行，每 10 分钟查一次（推荐） |
+| `npm run headed` | 显示浏览器窗口，方便观察/调试 |
+| `npm run once` | 只查一次 |
+| `npm run interval:5` | 每 5 分钟查一次 |
 
-### 手动模式流程
-
-```
-┌─────────────────────────────────────┐
-│  浏览器打开 → 表单已预填好           │
-│  你手动输入验证码 → 点击"查询"       │
-│  工具检测到结果页 → 接管控制权        │
-│  定时刷新查询 → 录取信息出现 → 响铃！ │
-└─────────────────────────────────────┘
-```
-
-### 自动模式流程
+流程：
 
 ```
 ┌──────────────────────────────────────────┐
-│  访问查询页 → 提取验证码图片              │
-│  多策略 OCR 识别 → 产生候选数字列表       │
-│  逐个尝试候选 → 服务器反馈对/错           │
-│  正确 → 解析结果 → 等待→下一轮            │
-│  全部错误 → 刷新验证码 → 重新 OCR         │
-│  检测到录取信息 → 响铃 + 截图 + 保存HTML + 发邮件 │
+│  访问查询页 → ddddocr识别验证码（~1秒）  │
+│  提交查询 → 服务器返回结果               │
+│  暂无录取 → 等待间隔 → 下一轮             │
+│  检测到录取信息 → 弹窗 + 截图 + 发邮件   │
 └──────────────────────────────────────────┘
 ```
 
@@ -93,9 +91,32 @@ npm start
 
 ## 📧 邮件通知（SMTP）
 
-检测到录取结果后，程序可以自动发送邮件通知，附带录取详情和页面截图。
+检测到录取结果后自动发送邮件，附带录取详情和页面截图。
 
+### 两种邮件
 
+| 邮件 | 触发时机 | 内容 |
+|------|---------|------|
+| **测试邮件** | 首次查询成功后 | 考生姓名、准考证号、当前状态、运行配置 |
+| **录取通知** | 检测到录取结果 | 考生状态、院校名称、专业名称、批次、科类等 **全部9个录取字段** + 页面截图附件 |
+
+录取通知邮件示例：
+
+```
+🎉 高考录取结果已出！
+
+  考生状态    已录取
+  院校代号    10422
+  院校名称    山东大学
+  专业组名称  不限选考科目
+  专业代号    01
+  专业名称    计算机科学与技术
+  批次名称    本科一批
+  科类名称    理工
+  计划性质    非定向
+
+  [页面截图附件]
+```
 
 ### 配置步骤
 
@@ -137,7 +158,7 @@ node auto-checker.js --email-to=me@example.com       # 覆盖收件人
 
 > ⚠️ 授权码不是邮箱登录密码！QQ/163 等需要在邮箱设置中单独生成。
 >
-> 💡 首次配置 SMTP 并启动后，程序会自动发送一封测试邮件验证配置是否正确。如果收到测试邮件，说明配置成功。后续除非修改 SMTP 配置（服务器/账号/收件人），不会重复发送测试邮件。
+> 💡 首次查询成功后会自动发送测试邮件，包含考生姓名、当前状态和运行配置，一次性验证 SMTP + 查询 + 考生信息。修改 SMTP 配置后重新查询会再次发送。
 
 ---
 
@@ -145,22 +166,21 @@ node auto-checker.js --email-to=me@example.com       # 覆盖收件人
 
 | 命令 | 说明 |
 |------|------|
-| `npm start` | 自动模式，每 10 分钟查一次 |
-| `npm run manual` | 手动模式，持续轮询 |
-| `npm run once` | 自动模式，只查一次 |
-| `npm run once-manual` | 手动模式，只查一次 |
-| `npm run interval:5` | 自动模式，每 5 分钟查一次 |
-| `npm run interval:15` | 自动模式，每 15 分钟查一次 |
-| `npm run interval:30` | 自动模式，每 30 分钟查一次 |
+| `npm start` | 后台静默，每 10 分钟查一次 |
+| `npm run headed` | 显示浏览器窗口，方便调试 |
+| `npm run once` | 只查一次 |
+| `npm run once-headed` | 显示浏览器，只查一次 |
+| `npm run interval:5` | 每 5 分钟查一次 |
+| `npm run interval:15` | 每 15 分钟查一次 |
+| `npm run interval:30` | 每 30 分钟查一次 |
 
 或直接使用命令行参数：
 
 ```bash
-node auto-checker.js                     # 自动模式，10分钟间隔
-node auto-checker.js --headed            # 手动模式
+node auto-checker.js                     # 后台静默，10分钟间隔
+node auto-checker.js --headed            # 显示浏览器窗口
 node auto-checker.js --once              # 只查一次
 node auto-checker.js --interval=5        # 每5分钟
-node auto-checker.js --headed --once     # 手动模式，只查一次
 node auto-checker.js --email-on          # 启用邮件通知
 node auto-checker.js --no-email          # 禁用邮件通知
 node auto-checker.js --email-to=me@qq.com # 指定收件人
@@ -172,11 +192,11 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 程序会：
 
-1. **🔔 响铃** — 连续 10 次系统蜂鸣，之后每 30 秒重复
-2. **📧 发邮件** — 发送录取详情 + 页面截图到指定邮箱（需配置 SMTP）
-3. **📸 截图** — 完整页面截图保存到 `results/admission_<时间>.png`
-4. **📄 保存 HTML** — 原始页面保存到 `results/admission_<时间>.html`
-5. **📋 终端输出** — 打印考生姓名、录取院校、专业等详情
+1. **💬 桌面弹窗** — Windows 通知弹出，之后 10/20/30 分钟各提醒一次
+2. **📧 发邮件** — 全部9个录取字段 + 页面截图附件（需配置 SMTP）
+3. **📸 截图** — 完整页面保存到 `results/admission_<时间>.png`
+4. **📄 HTML** — 原始页面保存到 `results/admission_<时间>.html`
+5. **📋 终端** — 打印录取详情
 
 ---
 
@@ -186,7 +206,13 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 |------|------|
 | `config.json` | **配置文件** — 准考证号、邮箱等（不会被 git 提交） |
 | `config.example.json` | 配置模板 — 可提交到 git，供他人参考 |
+| `setup.bat` | 一键部署脚本（Windows） |
+
+| `setup.sh` | 一键部署脚本（macOS/Linux） |
+| `cleanup.bat` | 一键清理（包括配置和依赖，还原到 clone 状态） |
+| `cleanup-runtime.bat` | 只清理运行时垃圾（保留 config.json 和 node_modules） |
 | `auto-checker.js` | 主程序 |
+| `ocr_server.py` | ddddocr 验证码识别脚本 |
 | `package.json` | 依赖和 npm 脚本 |
 | `auto-checker.log` | 运行日志（自动生成） |
 | `session_cookies.json` | 浏览器会话（自动生成，用于恢复） |
@@ -196,29 +222,31 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 ## 常见问题
 
-### Q: 自动模式 OCR 准确率怎么样？
+### Q: OCR 准确率怎么样？怎么知道用的哪个引擎？
 
-验证码是 4 位纯数字，程序使用以下策略提高成功率：
-- 对同一张验证码尝试 3 种不同放大倍数 × 3 种 OCR 模式 = 9 种预处理组合
-- 再加 6 种二值化阈值 + 2 种归一化策略
-- 共产生多个候选数字，按置信度和长度排序后逐个尝试
-- 每次查询最多尝试 3×3 = 9 个候选，失败则刷新验证码重新来
+使用 **ddddocr**（Python 库，专门为中国网站验证码训练），经实测准确率接近 100%。ddddocr 不可用时自动回退到 tesseract.js。运行时日志会标注引擎：
+```
+→ OCR(ddddocr): "Nhjv"(100%)        ← ddddocr 一把命中
+→ ddddocr 未命中，尝试 tesseract...
+→ OCR(tesseract): "5EW"(40%), ...    ← 回退 tesseract
+```
+安装方式：`pip install ddddocr`。
 
 ### Q: 为什么提示"操作频繁，请稍后再试"？
 
-服务器有频率限制。程序已在每次尝试间加了 4 秒延迟，每次刷新验证码间加了 6 秒延迟。如果仍然触发，可以增大 `candidateDelayMs` 和 `captchaRefetchDelayMs` 配置值。
-
-### Q: 手动模式超时了怎么办？
-
-手动模式有 120 秒的超时时间。如果超时，重新运行即可。也可以在代码中修改超时值（搜索 `120000`）。
+服务器有频率限制。程序已在每次尝试间加了 3 秒延迟，每次刷新验证码间加了 5 秒延迟。如果仍然触发，可以增大 `candidateDelayMs` 和 `captchaRefetchDelayMs` 配置值。
 
 ### Q: 程序能在后台一直运行吗？
 
 可以。程序设计为长期运行，每轮查询完会等待指定间隔后再查。使用 `Ctrl+C` 随时退出。
 
+### Q: 程序出问题了怎么办？
+
+先试试双击 `cleanup-runtime.bat` 清理运行时垃圾（保留配置和依赖），然后重新 `npm start`。如果还不行，用 `cleanup.bat` 彻底还原后再运行 `setup.bat` 重新部署。
+
 ### Q: 如何确认邮件配置是否正确？
 
-首次配置 SMTP 并启动程序后，会自动发送一封测试邮件。收到即说明配置成功。如果没收到，启动日志会显示失败原因。也可以修改 `config.json` 中的 SMTP 任意一项（如 `to` 收件人）后重新启动，程序检测到配置变更会重新发送测试邮件。
+首次查询成功后会自动发送测试邮件，包含考生姓名、状态和配置。收到即说明一切正常。修改 SMTP 配置后重新查询会再次发送。
 
 ---
 
@@ -227,7 +255,8 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 | 包 | 用途 |
 |----|------|
 | `playwright` | 浏览器自动化，操作 Chrome |
-| `tesseract.js` | OCR 识别验证码（仅自动模式） |
-| `sharp` | 验证码图片预处理（放大、灰度、二值化） |
-| `nodemailer` | SMTP 邮件发送（仅邮件通知） |
-| `lz-string` | 表单数据的 LZString 压缩编码 |
+| `ddddocr` (Python) | 验证码识别引擎（核心，准确率~100%） |
+| `tesseract.js` | OCR 备选方案（ddddocr 不可用时回退） |
+| `sharp` | 验证码图片预处理 |
+| `node-notifier` | Windows 桌面通知弹窗 |
+| `nodemailer` | SMTP 邮件发送 |
