@@ -51,6 +51,9 @@ function loadConfig() {
     candidateDelayMs: 3000,
     captchaRefetchDelayMs: 5000,
     headless: true,
+    browserRestartQueries: 50,       // 每N次查询重启浏览器释放内存
+    browserRestartHours: 6,          // 或每N小时重启浏览器
+    failureAlertThreshold: 6,        // 连续N次失败发送告警邮件
     smtp: {
       enabled: false,
       host: "smtp.qq.com",
@@ -275,19 +278,27 @@ async function sendTestEmail(queryResult) {
     </body></html>
   `;
   
-  try {
-    const info = await mailTransporter.sendMail({
-      from: CONFIG.smtp.from,
-      to: CONFIG.smtp.to,
-      subject: `✅ 录取查询工具 — 配置验证 (${studentName} ${statusText})`,
-      html: htmlBody,
-    });
-    log(`  ✅ 测试邮件已发送: ${info.messageId}`);
-    markEmailTested();
-  } catch (err) {
-    log(`  ⚠️ 测试邮件发送失败: ${err.message}`);
-    log(`  ⚠️ 请检查 config.json 中的 SMTP 配置`);
-    log(`  ⚠️ 程序将继续运行，录取时邮件通知可能无法送达`);
+  // 发送测试邮件（重试2次）
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const info = await mailTransporter.sendMail({
+        from: CONFIG.smtp.from,
+        to: CONFIG.smtp.to,
+        subject: `✅ 录取查询工具 — 配置验证 (${studentName} ${statusText})`,
+        html: htmlBody,
+      });
+      log(`  ✅ 测试邮件已发送: ${info.messageId}`);
+      markEmailTested();
+      return;
+    } catch (err) {
+      if (attempt < 1) {
+        await sleep(15000);
+      } else {
+        log(`  ⚠️ 测试邮件发送失败: ${err.message}`);
+        log(`  ⚠️ 请检查 config.json 中的 SMTP 配置`);
+        log(`  ⚠️ 程序将继续运行，录取时邮件通知可能无法送达`);
+      }
+    }
   }
 }
 
@@ -350,20 +361,29 @@ async function sendEmailNotification(details, screenshotPath) {
     });
   }
   
-  try {
-    const info = await mailTransporter.sendMail({
-      from: CONFIG.smtp.from,
-      to: CONFIG.smtp.to,
-      subject: `🎉 高考录取结果已出！${school ? " — " + school : ""}`,
-      html: htmlBody,
-      attachments,
-    });
-    log(`  📧 邮件已发送: ${info.messageId}`);
-    return true;
-  } catch (err) {
-    log(`  📧 邮件发送失败: ${err.message}`);
-    return false;
+  // 发送邮件（最多重试3次，间隔30秒，应对临时网络故障）
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const info = await mailTransporter.sendMail({
+        from: CONFIG.smtp.from,
+        to: CONFIG.smtp.to,
+        subject: `🎉 高考录取结果已出！${school ? " — " + school : ""}`,
+        html: htmlBody,
+        attachments,
+      });
+      log(`  📧 邮件已发送: ${info.messageId}`);
+      return true;
+    } catch (err) {
+      if (attempt < 2) {
+        log(`  📧 邮件发送失败(尝试${attempt + 1}/3): ${err.message}，30秒后重试...`);
+        await sleep(30000);
+      } else {
+        log(`  📧 邮件发送失败(已重试3次): ${err.message}`);
+        return false;
+      }
+    }
   }
+  return false;
 }
 
 // ===================== Cookie 持久化 =====================
@@ -649,83 +669,70 @@ async function executeQuery(context) {
  *   </table>
  */
 function parseResultPage(html) {
-  // 无录取信息
-  if (html.includes("暂无录取信息") || html.includes("暂无录取") || html.includes("暂无信息")) {
+  // ---- 无录取信息：关键词泛化匹配（覆盖各种变体） ----
+  const noResultPatterns = [
+    "暂无录取", "暂无信息", "暂无数据", "暂未公布", "暂未录取",
+    "当前没有", "没有您的录取", "未查到", "无录取", "无相关",
+  ];
+  if (noResultPatterns.some(p => html.includes(p))) {
     return { found: false, message: "暂无录取信息" };
   }
   
-  // 验证码错误 (服务器端返回)
+  // ---- 错误状态检测 ----
   if (html.includes("验证码不正确") || html.includes("验证码错误") || html.includes("验证码无效")) {
     return { found: false, message: "验证码错误", captchaError: true };
   }
-  
-  // 操作频繁/限流
   if (html.includes("操作频繁") || html.includes("稍后再试") || html.includes("频率")) {
     return { found: false, message: "操作频繁，请稍后再试", captchaError: true };
   }
-  
-  // 表单页（验证码错误回显，无录取表格）
   if (html.includes('id="key1"') && html.includes("请输入")) {
     return { found: false, message: "返回了查询表单", captchaError: true };
   }
   
-  // 检查录取信息：用CSS class精确定位
-  const hasAdmissionTable = html.includes("enro-result");
-  if (!hasAdmissionTable) {
-    const snippet = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 200);
-    return { found: false, message: `未知响应: ${snippet.substring(0, 100)}`, unknown: true };
-  }
-  
-  // 提取考生基本信息
+  // ---- 提取考生基本信息 ----
   const details = {};
   const nameMatch = html.match(/<span class="kname">([^<]+)<\/span>/);
   if (nameMatch) details["姓名"] = nameMatch[1].trim();
-  
   const examMatch = html.match(/<span class="knum">(\d+)<\/span>/);
   if (examMatch) details["准考证号"] = examMatch[1];
-  
   const idMatch = html.match(/<span class="kksh">(\d+)<\/span>/);
   if (idMatch) details["考生号"] = idMatch[1];
   
-  // 用CSS class精确定位录取表格数据（完整9个字段）
-  const fieldMap = {
-    "lqzt":   "考生状态",
-    "yxdh":   "院校代号",
-    "yxmc":   "院校名称",
-    "zyzmc":  "专业组名称",
-    "zydh":   "专业代号",
-    "zymc":   "专业名称",
-    "pcmc":   "批次名称",
-    "klmc":   "科类名称",
-    "jhxzmc": "计划性质",
-  };
-  
-  let hasAnyData = false;
-  for (const [cls, label] of Object.entries(fieldMap)) {
-    const regex = new RegExp(`<td class="${cls}[^"]*">([^<]*)<\\/td>|<th class="${cls}[^"]*">([^<]*)<\\/th>`, "i");
-    const match = html.match(regex);
-    if (match) {
-      const value = (match[1] || match[2] || "").trim();
-      if (value) {
-        details[label] = value;
-        hasAnyData = true;
+  // ---- 录取信息提取：CSS class 精确匹配（主策略） ----
+  if (html.includes("enro-result")) {
+    const fieldMap = {
+      "lqzt": "考生状态", "yxdh": "院校代号", "yxmc": "院校名称",
+      "zyzmc": "专业组名称", "zydh": "专业代号", "zymc": "专业名称",
+      "pcmc": "批次名称", "klmc": "科类名称", "jhxzmc": "计划性质",
+    };
+    let hasAnyData = false;
+    for (const [cls, label] of Object.entries(fieldMap)) {
+      const regex = new RegExp(`<td class="${cls}[^"]*">([^<]*)<\\/td>|<th class="${cls}[^"]*">([^<]*)<\\/th>`, "i");
+      const match = html.match(regex);
+      if (match) {
+        const value = (match[1] || match[2] || "").trim();
+        if (value) { details[label] = value; hasAnyData = true; }
       }
     }
-  }
-  
-  if (!hasAnyData) {
+    if (hasAnyData) {
+      const plainText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+      return { found: true, message: "🎉 检测到录取信息！", details, plainText: plainText.substring(0, 3000) };
+    }
+    // 表格存在但数据全空 → 暂无录取
     return { found: false, message: "暂无录取信息" };
   }
   
-  const plainText = html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  // ---- 兜底：关键词匹配（网站改版后 class 名变了也能兜住） ----
+  const admissionKeywords = ["录取院校", "院校名称", "录取专业", "专业名称", "录取批次", "考生状态"];
+  const hasAdmissionText = admissionKeywords.some(k => html.includes(k));
+  if (hasAdmissionText) {
+    // 尝试从纯文本中提取可能的信息
+    const plainText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+    return { found: true, message: "🎉 检测到录取信息（兜底匹配）！", details, plainText: plainText.substring(0, 3000), fallback: true };
+  }
   
-  return { found: true, message: "🎉 检测到录取信息！", details, plainText: plainText.substring(0, 3000) };
+  const snippet = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 200);
+  return { found: false, message: `未知响应: ${snippet.substring(0, 100)}`, unknown: true };
 }
 
 // ===================== 主循环 =====================
@@ -774,9 +781,9 @@ async function main() {
     log("  浏览器: Playwright 内置 Chromium");
   }
   
-  const browser = await chromium.launch(launchOptions);
+  let browser = await chromium.launch(launchOptions);
   
-  const context = await browser.newContext({
+  let context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     viewport: { width: 1280, height: 800 },
   });
@@ -790,6 +797,33 @@ async function main() {
   }
   
   let attemptNumber = 0;
+  let queriesSinceRestart = 0;
+  const RESTART_INTERVAL = CONFIG.browserRestartQueries;
+  const RESTART_INTERVAL_MS = CONFIG.browserRestartHours * 3600 * 1000;
+  let lastRestartTime = Date.now();
+  let consecutiveFailures = 0;
+  const FAILURE_ALERT_THRESHOLD = CONFIG.failureAlertThreshold;
+  
+  /**
+   * 重启浏览器（释放 Chromium 长期运行积累的内存）
+   */
+  async function restartBrowser() {
+    log("├─ 🔄 重启浏览器释放内存...");
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+    
+    const newBrowser = await chromium.launch(launchOptions);
+    const newContext = await newBrowser.newContext({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      viewport: { width: 1280, height: 800 },
+    });
+    // 恢复 cookie
+    const cookies = loadCookies();
+    if (cookies) await newContext.addCookies(cookies);
+    
+    // 更新外部引用（通过修改闭包变量，然后 main 中用新引用）
+    return { browser: newBrowser, context: newContext };
+  }
   
   try {
     while (true) {
@@ -832,7 +866,23 @@ async function main() {
       
       if (!querySuccess || !finalResult) {
         log("├─ 所有尝试均失败");
+        consecutiveFailures++;
+        // 连续多次失败：发送告警通知
+        if (consecutiveFailures === FAILURE_ALERT_THRESHOLD && CONFIG.smtp.enabled) {
+          log("├─ ⚠️ 连续6次查询失败，发送告警邮件...");
+          if (!mailTransporter) initMailer();
+          try {
+            await mailTransporter.sendMail({
+              from: CONFIG.smtp.from,
+              to: CONFIG.smtp.to,
+              subject: "⚠️ 录取查询工具 — 服务异常告警",
+              html: `<p>连续 ${FAILURE_ALERT_THRESHOLD} 次查询均失败，可能网络异常或验证码识别故障。</p><p>请检查运行日志。</p><p style="color:#999">${timestamp()}</p>`,
+            });
+            log("├─ 告警邮件已发送");
+          } catch (e) { log(`├─ 告警邮件发送失败: ${e.message}`); }
+        }
       } else if (finalResult.found) {
+        consecutiveFailures = 0;  // 录取成功，重置计数器
         // ===== 🎉 找到录取信息！=====
         log("├─ ╔══════════════════════════════════════╗");
         log("├─ ║  🎉🎉  检 测 到 录 取 信 息 ！ 🎉🎉  ║");
@@ -885,6 +935,7 @@ async function main() {
           const nameMatch = finalResult.html.match(/<span class="kname">([^<]+)<\/span>/);
           if (nameMatch) log(`├─ 考生: ${nameMatch[1].trim()}`);
         }
+        consecutiveFailures = 0;  // 查询成功，重置失败计数
       }
       
       // 首次查询成功后发送测试邮件（验证SMTP+查询功能+考生信息）
@@ -892,6 +943,16 @@ async function main() {
       if (querySuccess && finalResult && !finalResult.found && attemptNumber === 1) {
         log("├─");
         await sendTestEmail(finalResult);
+      }
+      
+      // 长期运行：每50次或6小时自动重启浏览器释放内存
+      queriesSinceRestart++;
+      if (queriesSinceRestart >= RESTART_INTERVAL || (Date.now() - lastRestartTime) >= RESTART_INTERVAL_MS) {
+        const newRefs = await restartBrowser();
+        browser = newRefs.browser;
+        context = newRefs.context;
+        queriesSinceRestart = 0;
+        lastRestartTime = Date.now();
       }
       
       // 单次模式

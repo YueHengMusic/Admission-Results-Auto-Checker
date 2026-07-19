@@ -1,67 +1,51 @@
 {
   "___________________查询信息___________________": "",
-
-  "_examNumber":   "准考证号（11位）或考生号（14位）",
-  "examNumber":    "12345678901",
-
-  "_idLast4":      "身份证号后4位",
-  "idLast4":       "1234",
-
+  "_examNumber": "准考证号（11位）或考生号（14位）",
+  "examNumber": "12345678901",
+  "_idLast4": "身份证号后4位",
+  "idLast4": "1234",
   "_checkIntervalMinutes": "查询间隔（分钟）。0 = 只查一次",
   "checkIntervalMinutes": 10,
-
   "___________________OCR与限流___________________": "",
-
-  "_maxCaptchaRefetches":     "每个查询周期最多刷新几次验证码（越大成功率越高但越慢）",
-  "maxCaptchaRefetches":      5,
-
+  "_maxCaptchaRefetches": "每个查询周期最多刷新几次验证码（越大成功率越高但越慢）",
+  "maxCaptchaRefetches": 5,
   "_maxCandidatesPerCaptcha": "每张验证码最多尝试几个 OCR 候选（越大成功率越高但越慢）",
-  "maxCandidatesPerCaptcha":  4,
-
-  "_candidateDelayMs":        "候选间延迟（毫秒）。太小会被限流",
-  "candidateDelayMs":         3000,
-
-  "_captchaRefetchDelayMs":   "刷新验证码间延迟（毫秒）",
-  "captchaRefetchDelayMs":    5000,
-
+  "maxCandidatesPerCaptcha": 4,
+  "_candidateDelayMs": "候选间延迟（毫秒）。太小会被限流",
+  "candidateDelayMs": 3000,
+  "_captchaRefetchDelayMs": "刷新验证码间延迟（毫秒）",
+  "captchaRefetchDelayMs": 5000,
   "___________________运行模式___________________": "",
-
-  "_headless":       "是否隐藏浏览器窗口。true=后台运行, false=可见（调试用）",
-  "headless":        true,
-
+  "_headless": "是否隐藏浏览器窗口。true=后台运行, false=可见（调试用）",
+  "headless": true,
+  "_browserRestartQueries": "每N次查询后重启浏览器释放内存（0=不重启）",
+  "browserRestartQueries": 50,
+  "_browserRestartHours": "或每N小时后重启浏览器",
+  "browserRestartHours": 6,
+  "_failureAlertThreshold": "连续N次查询失败发送告警邮件（0=不告警）",
+  "failureAlertThreshold": 6,
   "___________________邮件通知___________________": "",
-
   "smtp": {
     "_enabled": "是否启用邮件通知",
     "enabled": false,
-
     "___________________服务器___________________": "",
-
-    "_host":   "SMTP 服务器地址。QQ邮箱: smtp.qq.com, 163: smtp.163.com",
-    "host":    "smtp.qq.com",
-
-    "_port":   "端口。SSL 用 465, STARTTLS 用 587",
-    "port":    465,
-
+    "_host": "SMTP 服务器地址。QQ邮箱: smtp.qq.com, 163: smtp.163.com",
+    "host": "smtp.qq.com",
+    "_port": "端口。SSL 用 465, STARTTLS 用 587",
+    "port": 465,
     "_secure": "true=SSL直连, false=STARTTLS升级",
-    "secure":  true,
-
+    "secure": true,
     "___________________账号___________________": "",
-
     "auth": {
       "_user": "发件邮箱地址",
-      "user":  "your-email@qq.com",
-
+      "user": "your-email@qq.com",
       "_pass": "邮箱授权码（不是登录密码！QQ邮箱需在设置→账户中生成）",
-      "pass":  "your-auth-code"
+      "pass": "your-auth-code"
     },
-
     "___________________收发___________________": "",
-
     "_from": "发件人显示名称和地址",
-    "from":  "录取查询 <your-email@qq.com>",
-
-    "_to":   "收件人邮箱。多个用逗号分隔",
-    "to":    "your-email@qq.com"
+    "from": "录取查询 <your-email@qq.com>",
+    "_to": "收件人邮箱。多个用逗号分隔",
+    "to": "your-email@qq.com"
   }
 }
