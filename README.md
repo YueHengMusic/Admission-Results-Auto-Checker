@@ -49,6 +49,8 @@ npm start
   "candidateDelayMs": 3000,
   "captchaRefetchDelayMs": 5000,
   "headless": true,
+  "browserRestartQueries": 50,
+  "failureAlertThreshold": 6,
 
   "smtp": {
     "enabled": false,
@@ -192,7 +194,7 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 程序会：
 
-1. **💬 桌面弹窗** — Windows 通知弹出，之后 10/20/30 分钟各提醒一次
+1. **💬 桌面弹窗** — 桌面通知弹出，之后 10/20/30 分钟各提醒一次
 2. **📧 发邮件** — 全部9个录取字段 + 页面截图附件（需配置 SMTP）
 3. **📸 截图** — 完整页面保存到 `results/admission_<时间>.png`
 4. **📄 HTML** — 原始页面保存到 `results/admission_<时间>.html`
@@ -238,7 +240,7 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 ### Q: 程序能在后台一直运行吗？
 
-可以。程序设计为长期运行，每轮查询完会等待指定间隔后再查。使用 `Ctrl+C` 随时退出。
+可以。程序支持长期运行——每 50 次查询或 6 小时自动重启浏览器释放内存，连续 6 次失败会发送告警邮件。使用 `Ctrl+C` 随时退出。这些阈值可在 `config.json` 中调整（`browserRestartQueries`、`failureAlertThreshold` 等）。
 
 ### Q: 程序出问题了怎么办？
 

@@ -23,9 +23,6 @@ if exist test_captcha.jpg      (del /q test_captcha.jpg      && set /a DELETED+=
 if exist results               (rmdir /s /q results          && echo [OK] results\              && set /a DELETED+=1) else (echo [--] results\)
 if exist config.json           (del /q config.json           && echo [OK] config.json           && set /a DELETED+=1) else (echo [--] config.json)
 
-REM Chromium 删除会影响其他 Playwright 项目，如需清理请手动删除
-REM   %USERPROFILE%\AppData\Local\ms-playwright
-
 REM ---- setup.bat 安装的依赖 ----
 if exist node_modules (
     rmdir /s /q node_modules
@@ -41,8 +38,11 @@ echo   清理完成！共删除 !DELETED! 个文件/目录
 echo ============================================
 echo.
 echo   温馨提示：
-echo     ddddocr 安装在系统 Python 中，不会自动卸载。
-echo     如需卸载，请手动执行: pip uninstall ddddocr -y
+echo     ddddocr 安装在系统 Python 中，未自动卸载。
+echo     如需卸载: pip uninstall ddddocr -y
+echo.
+echo     Playwright Chromium 可能影响其他项目，未自动删除。
+echo     如需清理: %USERPROFILE%\AppData\Local\ms-playwright
 echo.
 if !DELETED! GTR 0 (
     echo   下次使用前请运行 setup.bat 重新安装依赖

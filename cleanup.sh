@@ -42,7 +42,11 @@ echo "  清理完成！共删除 ${DELETED} 个文件/目录"
 echo "============================================"
 echo
 echo "  ddddocr 安装在系统 Python 中，未自动卸载。"
-echo "  如需卸载: pip uninstall ddddocr -y"
+echo "     如需卸载: pip uninstall ddddocr -y"
+echo
+echo "  Playwright Chromium 可能影响其他项目，未自动删除。"
+echo "     如需清理: rm -rf ~/Library/Caches/ms-playwright  # macOS"
+echo "               rm -rf ~/.cache/ms-playwright          # Linux"
 echo
 echo "  下次使用前请运行 setup.sh 重新部署"
 echo

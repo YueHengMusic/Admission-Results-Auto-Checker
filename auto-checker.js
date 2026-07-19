@@ -114,16 +114,19 @@ if (!fs.existsSync(RESULT_DIR)) fs.mkdirSync(RESULT_DIR, { recursive: true });
 
 // ===================== 工具函数 =====================
 
+/** 东八区时间戳，用于日志和邮件 */
 function timestamp() {
   return new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
 }
 
+/** 同时输出到控制台和日志文件 */
 function log(message) {
   const line = `[${timestamp()}] ${message}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + "\n");
 }
 
+/** Promise 版延迟 */
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
@@ -148,16 +151,19 @@ function sendDesktopNotification(title, message) {
 let mailTransporter = null;
 const EMAIL_TESTED_FILE = path.join(__dirname, ".email_tested");
 
+/** 对SMTP关键字段取MD5，用于检测配置是否变更 */
 function smtpConfigFingerprint() {
   // 用关键字段生成指纹，配置变了就重新测试
   const key = `${CONFIG.smtp.host}|${CONFIG.smtp.auth.user}|${CONFIG.smtp.to}`;
   return require("crypto").createHash("md5").update(key).digest("hex");
 }
 
+/** 记录已测试的SMTP指纹 */
 function markEmailTested() {
   fs.writeFileSync(EMAIL_TESTED_FILE, smtpConfigFingerprint());
 }
 
+/** 检查SMTP配置是否已经过测试 */
 function isEmailAlreadyTested() {
   try {
     if (fs.existsSync(EMAIL_TESTED_FILE)) {
@@ -212,10 +218,6 @@ function emailStyle() {
       .tip-ok { background: #f6f9f6; color: #2d6a2d; }
       .tip-warn { background: #fef9f0; color: #8a6d14; }
       .foot { padding: 16px 28px; border-top: 1px solid #eee; font-size: 11px; color: #bbb; text-align: center; }
-      table.info { width: 100%; border-collapse: collapse; }
-      table.info td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
-      table.info td:first-child { color: #888; width: 90px; white-space: nowrap; }
-      table.info td:last-child { color: #333; font-weight: 600; }
       .highlight { background: #f0fdf4; border-left: 3px solid #22c55e; padding: 12px 16px; border-radius: 6px; margin: 16px 0; font-size: 14px; color: #166534; }
       .warn { background: #fffbeb; border-left: 3px solid #f59e0b; padding: 12px 16px; border-radius: 6px; margin: 16px 0; font-size: 14px; color: #92400e; }
       .footer { text-align: center; color: #aaa; font-size: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #f0f0f0; }
@@ -299,6 +301,60 @@ async function sendTestEmail(queryResult) {
         log(`  ⚠️ 程序将继续运行，录取时邮件通知可能无法送达`);
       }
     }
+  }
+}
+
+
+/**
+ * 发送状态变化通知邮件
+ */
+async function sendStatusChangeEmail(oldStatus, newStatus, details, screenshotPath, danger = false) {
+  if (!CONFIG.smtp.enabled || !mailTransporter) return;
+  
+  const school = details?.["院校名称"] || "";
+  const statusText = oldStatus ? `${oldStatus} → ${newStatus}` : `当前状态: ${newStatus}`;
+  const emoji = danger ? "⚠️" : (oldStatus ? "🔄" : "📋");
+  const title = danger ? "⚠️ 录取状态警告" : (oldStatus ? "录取状态更新" : "检测到投档信息");
+  
+  let detailRows = "";
+  if (details) {
+    for (const [key, value] of Object.entries(details)) {
+      if (key === "考生状态") continue;
+      detailRows += `<tr><td>${key}</td><td>${value}</td></tr>`;
+    }
+  }
+
+  const htmlBody = `
+    <!DOCTYPE html><html><head><meta charset="utf-8">${emailStyle()}</head><body>
+    <div class="card">
+      <div class="head">
+        <div class="emoji">${emoji}</div>
+        <h2>${title}</h2>
+        <div class="sub">${statusText}${school ? " · " + school : ""}</div>
+      </div>
+      <div class="body">
+        <div class="section"><div class="section-label">当前详情</div>
+        <table class="info">
+          <tr><td>状态变化</td><td>${statusText}</td></tr>
+          ${detailRows}
+        </table></div>
+        <div class="foot">程序将持续监测 · ${timestamp()}</div>
+      </div>
+    </div>
+    </body></html>
+  `;
+
+  try {
+    await mailTransporter.sendMail({
+      from: CONFIG.smtp.from,
+      to: CONFIG.smtp.to,
+      subject: `${emoji} 录取状态: ${statusText}`,
+      attachments: screenshotPath ? [{ filename: path.basename(screenshotPath), path: screenshotPath }] : [],
+      html: htmlBody,
+    });
+    log("  📧 状态邮件已发送");
+  } catch (e) {
+    log(`  📧 状态邮件发送失败: ${e.message}`);
   }
 }
 
@@ -454,7 +510,7 @@ function ocrViaDdddocr(imagePath) {
   return null;
 }
 
-async function loadOCR() {
+async function loadOCR() {  // 初始化tesseract.js作为备选引擎
   // 初始化tesseract.js作为备选（ddddocr不可用时回退）
   log("  正在加载 OCR 引擎（首次需下载语言包，约15MB，请耐心等待）...");
   const { createWorker } = require("tesseract.js");
@@ -485,6 +541,7 @@ async function recognizeCaptchaMulti(imagePath) {
   const seen = new Set();
   const candidates = [];
   
+  // 添加候选到列表（去重：3-4位字母数字）
   function add(code, conf, source) {
     // 去重：只添加3-4位字母数字，避免重复候选
     if (!seen.has(code) && code.length >= 3 && code.length <= 4) {
@@ -634,15 +691,10 @@ async function executeQuery(context) {
     const result = parseResultPage(html);
     result.html = html;
     
-    // 仅在查到录取结果时保存截图到 results/
+    // 始终截图并保存HTML内容（Buffer），是否落盘由调用方决定
     if (result.found) {
-      const timeStr = timestamp().replace(/[/:]/g, "-").replace(/\s/g, "_");
-      const ssPath = path.join(RESULT_DIR, `admission_${timeStr}.png`);
-      await page.screenshot({ path: ssPath, fullPage: true });
-      result.screenshot = ssPath;
-      const htmlPath = path.join(RESULT_DIR, `admission_${timeStr}.html`);
-      fs.writeFileSync(htmlPath, html);
-      result.htmlPath = htmlPath;
+      result.screenshotBuf = await page.screenshot({ fullPage: true });
+      result.htmlContent = html;
     }
     
     return result;
@@ -669,16 +721,7 @@ async function executeQuery(context) {
  *   </table>
  */
 function parseResultPage(html) {
-  // ---- 无录取信息：关键词泛化匹配（覆盖各种变体） ----
-  const noResultPatterns = [
-    "暂无录取", "暂无信息", "暂无数据", "暂未公布", "暂未录取",
-    "当前没有", "没有您的录取", "未查到", "无录取", "无相关",
-  ];
-  if (noResultPatterns.some(p => html.includes(p))) {
-    return { found: false, message: "暂无录取信息" };
-  }
-  
-  // ---- 错误状态检测 ----
+  // ---- 错误状态检测（优先级最高） ----
   if (html.includes("验证码不正确") || html.includes("验证码错误") || html.includes("验证码无效")) {
     return { found: false, message: "验证码错误", captchaError: true };
   }
@@ -698,7 +741,7 @@ function parseResultPage(html) {
   const idMatch = html.match(/<span class="kksh">(\d+)<\/span>/);
   if (idMatch) details["考生号"] = idMatch[1];
   
-  // ---- 录取信息提取：CSS class 精确匹配（主策略） ----
+  // ---- 录取信息提取：CSS class 精确匹配（优先，不受页面其他区域干扰） ----
   if (html.includes("enro-result")) {
     const fieldMap = {
       "lqzt": "考生状态", "yxdh": "院校代号", "yxmc": "院校名称",
@@ -718,15 +761,20 @@ function parseResultPage(html) {
       const plainText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
       return { found: true, message: "🎉 检测到录取信息！", details, plainText: plainText.substring(0, 3000) };
     }
-    // 表格存在但数据全空 → 暂无录取
+  }
+  
+  // ---- 表格不存在或无数据时，用关键词判断"暂无录取" ----
+  const noResultPatterns = [
+    "暂无录取", "暂无信息", "暂无数据", "暂未公布", "暂未录取",
+    "当前没有", "没有您的录取", "未查到", "无录取", "无相关",
+  ];
+  if (noResultPatterns.some(p => html.includes(p))) {
     return { found: false, message: "暂无录取信息" };
   }
   
-  // ---- 兜底：关键词匹配（网站改版后 class 名变了也能兜住） ----
+  // ---- 兜底：页面有关键录取词但CSS class不匹配（网站改版） ----
   const admissionKeywords = ["录取院校", "院校名称", "录取专业", "专业名称", "录取批次", "考生状态"];
-  const hasAdmissionText = admissionKeywords.some(k => html.includes(k));
-  if (hasAdmissionText) {
-    // 尝试从纯文本中提取可能的信息
+  if (admissionKeywords.some(k => html.includes(k))) {
     const plainText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
     return { found: true, message: "🎉 检测到录取信息（兜底匹配）！", details, plainText: plainText.substring(0, 3000), fallback: true };
   }
@@ -803,6 +851,20 @@ async function main() {
   let lastRestartTime = Date.now();
   let consecutiveFailures = 0;
   const FAILURE_ALERT_THRESHOLD = CONFIG.failureAlertThreshold;
+  let lastAdmissionStatus = null;  // 追踪上一次的考生状态，用于检测变化
+  
+  // 危险状态（退档相关、自由可投等）——匹配子串
+  const DANGER_KEYWORDS = ["退档", "自由可投", "未录取", "不予录取"];
+  // 最终录取：包含"录取"但不含"预""拟""退""未""不"（排除预录取、拟录取、退档等）
+  function isFinalStatus(status) {
+    return status.includes("录取")
+      && !status.includes("预")
+      && !status.includes("拟")
+      && !status.includes("退")
+      && !status.includes("未")
+      && !status.includes("不")
+      && !status.includes("审");  // 排除"录取待审"等中间状态
+  }
   
   /**
    * 重启浏览器（释放 Chromium 长期运行积累的内存）
@@ -882,52 +944,93 @@ async function main() {
           } catch (e) { log(`├─ 告警邮件发送失败: ${e.message}`); }
         }
       } else if (finalResult.found) {
-        consecutiveFailures = 0;  // 录取成功，重置计数器
-        // ===== 🎉 找到录取信息！=====
-        log("├─ ╔══════════════════════════════════════╗");
-        log("├─ ║  🎉🎉  检 测 到 录 取 信 息 ！ 🎉🎉  ║");
-        log("├─ ╚══════════════════════════════════════╝");
+        consecutiveFailures = 0;
+        const currentStatus = finalResult.details?.["考生状态"] || "";
+        const statusChanged = lastAdmissionStatus && lastAdmissionStatus !== currentStatus;
+        const isDanger = DANGER_KEYWORDS.some(s => currentStatus.includes(s));
+        const isFinal = isFinalStatus(currentStatus);
         
-        if (finalResult.details && Object.keys(finalResult.details).length > 0) {
+        // 状态变化或首次检测：写入截图/HTML到磁盘，发邮件
+        const statusChangedOrNew = !lastAdmissionStatus || statusChanged;
+        let screenshotPath = null;
+        if (statusChangedOrNew && finalResult.screenshotBuf) {
+          const ts = timestamp().replace(/[/:]/g, "-").replace(/\s/g, "_");
+          screenshotPath = path.join(RESULT_DIR, `admission_${ts}.png`);
+          const htmlPath = path.join(RESULT_DIR, `admission_${ts}.html`);
+          fs.writeFileSync(screenshotPath, finalResult.screenshotBuf);
+          fs.writeFileSync(htmlPath, finalResult.htmlContent);
+          log(`├─ 截图: ${screenshotPath}`);
+        }
+        
+        // 首次出现数据：通知用户
+        if (!lastAdmissionStatus) {
+          log("├─ ╔══════════════════════════════════════╗");
+          log("├─ ║  📋  检 测 到 投 档 信 息 ！        ║");
+          log("├─ ╚══════════════════════════════════════╝");
           log("├─");
-          log("├─ 录取详情:");
+          log(`├─ 当前状态: ${currentStatus}`);
+          log("├─ 程序将持续监测状态变化，正式录取时停止");
           for (const [key, value] of Object.entries(finalResult.details)) {
-            log(`├─   ${key}: ${value}`);
+            if (key !== "考生状态") log(`├─   ${key}: ${value}`);
+          }
+          sendDesktopNotification("📋 检测到投档信息", `当前状态: ${currentStatus}`);
+          if (CONFIG.smtp.enabled) {
+            await sendStatusChangeEmail(null, currentStatus, finalResult.details, screenshotPath);
+          }
+        }
+        // 状态变化
+        else if (statusChanged) {
+          log("├─ ╔══════════════════════════════════════╗");
+          log("├─ ║  🔄  录 取 状 态 更 新 ！           ║");
+          log("├─ ╚══════════════════════════════════════╝");
+          log(`├─ 状态变化: ${lastAdmissionStatus} → ${currentStatus}`);
+          for (const [key, value] of Object.entries(finalResult.details)) {
+            if (key !== "考生状态") log(`├─   ${key}: ${value}`);
+          }
+          
+          if (isDanger) {
+            log("├─ ⚠️ 警告：当前状态为危险状态，请关注！");
+            sendDesktopNotification("⚠️ 录取状态警告", `${lastAdmissionStatus} → ${currentStatus}`);
+          } else {
+            sendDesktopNotification("🔄 录取状态更新", `${lastAdmissionStatus} → ${currentStatus}`);
+          }
+          
+          if (CONFIG.smtp.enabled) {
+            await sendStatusChangeEmail(lastAdmissionStatus, currentStatus, finalResult.details, screenshotPath, isDanger);
+          }
+        }
+        // 状态未变
+        else {
+          log("├─ 📋 状态未变");
+          log(`├─ 当前状态: ${currentStatus}`);
+          if (finalResult.html) {
+            const nameMatch = finalResult.html.match(/<span class="kname">([^<]+)<\/span>/);
+            if (nameMatch) log(`├─ 考生: ${nameMatch[1].trim()}`);
           }
         }
         
-        if (finalResult.plainText) {
+        lastAdmissionStatus = currentStatus;
+        
+        // 最终录取 → 停止查询
+        if (isFinal) {
           log("├─");
-          for (const line of finalResult.plainText.split(/[。\n]/).slice(0, 15)) {
-            if (line.trim()) log(`├─   ${line.trim()}`);
+          log("├─ ╔══════════════════════════════════════╗");
+          log("├─ ║  🎉🎉  正 式 录 取 ！  🎉🎉        ║");
+          log("├─ ╚══════════════════════════════════════╝");
+          log("├─");
+          await sendEmailNotification(finalResult.details, screenshotPath);
+          const school = finalResult.details?.["院校名称"] || "";
+          sendDesktopNotification("🎉 高考录取结果已出！", school ? `你已被 ${school} 录取！` : "请查看录取详情");
+          
+          log("├─ 💬 将在 10/20/30 分钟后各弹窗提醒一次，按 Ctrl+C 可随时退出");
+          for (let i = 1; i <= 3; i++) {
+            sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
+            await sleep(10 * 60 * 1000);
+            log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
           }
+          log("└─ 提醒结束，程序退出");
+          break;
         }
-        
-        if (finalResult.screenshot) log(`├─ 截图: ${finalResult.screenshot}`);
-        if (finalResult.htmlPath) log(`├─ HTML: ${finalResult.htmlPath}`);
-        
-        // 发送邮件通知
-        log("├─");
-        await sendEmailNotification(finalResult.details, finalResult.screenshot);
-        
-        // 桌面弹窗
-        const school = finalResult.details?.["院校名称"] || "";
-        sendDesktopNotification(
-          "🎉 高考录取结果已出！",
-          school ? `你已被 ${school} 录取！请查看详情` : "请查看录取详情"
-        );
-        
-        log("├─");
-        log("└─ 💬 将在 10/20/30 分钟后各弹窗提醒一次，按 Ctrl+C 可随时退出");
-        
-        for (let i = 1; i <= 3; i++) {
-          sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
-          await sleep(10 * 60 * 1000);
-          log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
-        }
-        
-        log("└─ 提醒结束，程序退出");
-      } else {
         log(`├─ 结果: ${finalResult.message}`);
         
         // 显示考生姓名确认
