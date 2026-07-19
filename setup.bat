@@ -9,7 +9,7 @@ echo.
 
 REM ---- 检测 Node.js ----
 where node >nul 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [X] 未检测到 Node.js
     echo     请先安装: https://nodejs.org/
     pause
@@ -61,7 +61,7 @@ echo ============================================
 
 echo [..] npm install...
 call npm install
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [X] npm install 失败
     pause
     exit /b 1
@@ -70,7 +70,7 @@ echo [OK] npm 安装完成
 
 echo [..] pip install ddddocr...
 !PYTHON_CMD! -m pip install ddddocr -q
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo [X] ddddocr 安装失败，请手动执行: pip install ddddocr
 ) else (
     echo [OK] ddddocr 安装完成
