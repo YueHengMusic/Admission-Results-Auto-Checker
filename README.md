@@ -258,5 +258,5 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 | `ddddocr` (Python) | 验证码识别引擎（核心，准确率~100%） |
 | `tesseract.js` | OCR 备选方案（ddddocr 不可用时回退） |
 | `sharp` | 验证码图片预处理 |
-| `node-notifier` | Windows 桌面通知弹窗 |
+| `node-notifier` | 桌面通知弹窗（跨平台） |
 | `nodemailer` | SMTP 邮件发送 |

@@ -176,7 +176,7 @@ auto-checker.js
 │   ├── timestamp()         # 东八区时间戳
 │   ├── log()               # 同时输出控制台 + 写入日志文件
 │   ├── sleep()             # Promise 版延迟
-│   ├── sendDesktopNotification()  # Windows 桌面弹窗
+│   ├── sendDesktopNotification()  # 桌面弹窗（跨平台）
 │   ├── initMailer()        # 初始化 SMTP 连接
 │   ├── sendTestEmail()     # 首次查询成功后发送（含考生信息+状态）
 │   └── sendEmailNotification()  # 发送录取邮件（HTML + 截图附件）
