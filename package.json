@@ -5,9 +5,9 @@
   "main": "auto-checker.js",
   "scripts": {
     "start": "node auto-checker.js",
-    "manual": "node auto-checker.js --headed",
+    "headed": "node auto-checker.js --headed",
     "once": "node auto-checker.js --once",
-    "once-manual": "node auto-checker.js --headed --once",
+    "once-headed": "node auto-checker.js --headed --once",
     "interval:5": "node auto-checker.js --interval=5",
     "interval:15": "node auto-checker.js --interval=15",
     "interval:30": "node auto-checker.js --interval=30"
@@ -17,7 +17,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "lz-string": "^1.5.0",
+    "node-notifier": "^10.0.1",
     "nodemailer": "^9.0.3",
     "playwright": "^1.61.1",
     "sharp": "^0.35.3",
