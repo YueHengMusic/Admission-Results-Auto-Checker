@@ -36,7 +36,7 @@ if ! $PYTHON_CMD -m pip --version >/dev/null 2>&1; then
     echo "[WARN] Python pip 未安装"
     if [ "$(uname)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
         echo "[..] 尝试 apt-get install python3-pip..."
-        apt-get install -y python3-pip 2>/dev/null && echo "[OK] pip 安装完成" || { echo "[X] 自动安装失败，请手动: apt-get install python3-pip"; exit 1; }
+        apt-get install -y python3-pip 2>/dev/null && echo "[OK] pip 安装完成" || { echo "[X] 自动安装失败，请手动执行: apt-get install python3-pip"; exit 1; }
     elif [ "$(uname)" = "Linux" ]; then
         echo "[X] 当前系统非 Debian/Ubuntu，请手动安装 pip 后重新运行"
         echo "    Fedora: dnf install python3-pip"
@@ -68,10 +68,10 @@ elif grep -q "externally-managed" "$PIP_ERR" 2>/dev/null; then
     rm -f "$PIP_ERR"
     $PYTHON_CMD -m pip install ddddocr --break-system-packages \
         && echo "[OK] ddddocr 安装完成" \
-        || echo "[X] ddddocr 安装失败，请手动: pip install ddddocr --break-system-packages"
+        || echo "[X] ddddocr 安装失败，请手动执行: pip install ddddocr --break-system-packages"
 else
     rm -f "$PIP_ERR"
-    echo "[X] ddddocr 安装失败，请手动: pip install ddddocr"
+    echo "[X] ddddocr 安装失败，请手动执行: pip install ddddocr"
 fi
 
 # ---- 检测浏览器（npm install 之后，playwright 已可用） ----
@@ -96,7 +96,7 @@ else
         npx playwright install-deps chromium 2>&1 | tail -1 && echo "[OK] 系统依赖已就绪" || echo "[WARN] 系统依赖安装失败，可手动执行: npx playwright install-deps chromium"
     fi
     echo "[..] 检查 Playwright 内置 Chromium（npmmirror 镜像源）..."
-    npx playwright install chromium && echo "[OK] Chromium 已就绪" || echo "[X] Chromium 安装失败，请手动: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ npx playwright install chromium"
+    npx playwright install chromium && echo "[OK] Chromium 已就绪" || echo "[X] Chromium 安装失败，请手动执行: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ npx playwright install chromium"
 fi
 
 echo
@@ -128,12 +128,14 @@ echo "    [2] 先测试一下（只查一次，确认信息正确）"
 echo "    [3] 显示浏览器窗口（可看到验证码识别过程）"
 echo "    [4] 退出，我稍后自己运行"
 echo
-printf "  输入序号 (1-4): "; read choice
 
-case "$choice" in
-    1) echo; echo "开始自动查询...（按 Ctrl+C 可随时停止）"; echo; npm start ;;
-    2) echo; echo "测试查询中..."; echo; npm run once ;;
-    3) echo; echo "显示浏览器窗口..."; echo; npm run headed ;;
-    4) echo; echo "你可以随时运行: npm start" ;;
-    *) echo "无效选择，请重新输入 (1-4)"; exec "$0" ;;
-esac
+while true; do
+    printf "  输入序号 (1-4): "; read choice
+    case "$choice" in
+        1) echo; echo "开始自动查询...（按 Ctrl+C 可随时停止）"; echo; npm start; break ;;
+        2) echo; echo "测试查询中..."; echo; npm run once; break ;;
+        3) echo; echo "显示浏览器窗口..."; echo; npm run headed; break ;;
+        4) echo; echo "你可以随时运行: npm start"; break ;;
+        *) echo "无效选择，请重新输入" ;;
+    esac
+done

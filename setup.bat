@@ -15,14 +15,17 @@ if !errorlevel! neq 0 (
     pause
     exit /b 1
 )
-for /f "tokens=2 delims=v." %%i in ('node -v 2^>nul') do set NODE_MAJOR=%%i
-if !NODE_MAJOR! LSS 18 (
-    echo [X] Node.js 版本过低 ^(v!NODE_MAJOR!.x，需要 ^>= 18^)
+for /f "delims=" %%i in ('node -v 2^>nul') do set NODE_V=%%i
+echo [OK] Node.js !NODE_V!
+
+REM 让 Node 自己检查版本（避免 for/f+中文+延迟展开的兼容性问题）
+node -e "process.exit(process.versions.node.split('.')[0] >= 18 ? 0 : 1)" >nul 2>&1
+if !errorlevel! neq 0 (
+    echo [X] Node.js 版本过低 ^(当前 !NODE_V!，需要 ^>= 18^)
     echo     请升级: https://nodejs.org/
     pause
     exit /b 1
 )
-for /f "delims=" %%i in ('node -v 2^>nul') do echo [OK] Node.js %%i
 
 REM ---- 检测 Python ----
 set "PYTHON_CMD="
