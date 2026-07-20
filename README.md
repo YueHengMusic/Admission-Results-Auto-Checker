@@ -13,11 +13,11 @@
 
 # 方式二：手动安装
 npm install
-
-# 2. 安装 Python 验证码识别引擎（必须！）
 pip install ddddocr
+# Linux 用户还需安装系统依赖：
+#   npx playwright install-deps chromium
 
-# 3. 编辑 config.json，填好你的准考证号和身份证后4位
+# 2. 编辑 config.json，填好你的准考证号和身份证后4位
 #    （如果 config.json 不存在，会自动从 config.example.json 创建）
 
 # 4.（可选）在 config.json 中配置 SMTP 邮件通知
@@ -27,6 +27,7 @@ npm start
 ```
 
 > **前置条件**：需要系统已安装 Node.js 和 Python 3。Chrome 可选（程序会自动回退 Playwright 内置 Chromium）。
+> **Linux 用户**：`setup.sh` 会自动安装系统依赖和 pip（需要 sudo 权限）。
 > **邮件通知**：可选功能，不配置也能正常使用（弹窗 + 截图仍然有效）。
 
 ---
@@ -77,15 +78,18 @@ npm start
 | `npm run headed` | 显示浏览器窗口，方便观察/调试 |
 | `npm run once` | 只查一次 |
 | `npm run interval:5` | 每 5 分钟查一次 |
+| `npm run interval:15` | 每 15 分钟查一次 |
+| `npm run interval:30` | 每 30 分钟查一次 |
 
 流程：
 
 ```
 ┌──────────────────────────────────────────┐
-│  访问查询页 → ddddocr识别验证码（~1秒）  │
-│  提交查询 → 服务器返回结果               │
-│  暂无录取 → 等待间隔 → 下一轮             │
-│  检测到录取信息 → 弹窗 + 截图 + 发邮件   │
+│  访问查询页 → ddddocr识别验证码（~1秒）    │
+│  提交查询 → 服务器返回结果                 │
+│  暂无录取 → 等待间隔 → 下一轮               │
+│  检测到录取信息 → 弹窗 + 截图 + 发邮件     │
+│  ddddocr 不可用时自动懒加载 tesseract 备选  │
 └──────────────────────────────────────────┘
 ```
 
@@ -208,13 +212,13 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 |------|------|
 | `config.json` | **配置文件** — 准考证号、邮箱等（不会被 git 提交） |
 | `config.example.json` | 配置模板 — 可提交到 git，供他人参考 |
-| `setup.bat` | 一键部署脚本（Windows） |
-
-| `setup.sh` | 一键部署脚本（macOS/Linux） |
-| `cleanup.bat` | 一键清理（包括配置和依赖，还原到 clone 状态） |
-| `cleanup-runtime.bat` | 只清理运行时垃圾（保留 config.json 和 node_modules） |
+| `setup.bat` / `setup.sh` | 一键部署脚本（Windows / macOS+Linux） |
+| `cleanup.bat` / `cleanup.sh` | 一键清理（包括配置和依赖，还原到 clone 状态） |
+| `cleanup-runtime.bat` / `cleanup-runtime.sh` | 只清理运行时垃圾（保留 config.json 和 node_modules） |
 | `auto-checker.js` | 主程序 |
 | `ocr_server.py` | ddddocr 验证码识别脚本 |
+| `ARCHITECTURE.md` | 项目架构与设计思路 |
+| `.editorconfig` | 编辑器配置（统一换行符和缩进） |
 | `package.json` | 依赖和 npm 脚本 |
 | `auto-checker.log` | 运行日志（自动生成） |
 | `session_cookies.json` | 浏览器会话（自动生成，用于恢复） |
@@ -242,9 +246,18 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 可以。程序支持长期运行——每 50 次查询或 6 小时自动重启浏览器释放内存，连续 6 次失败会发送告警邮件。使用 `Ctrl+C` 随时退出。这些阈值可在 `config.json` 中调整（`browserRestartQueries`、`failureAlertThreshold` 等）。
 
+### Q: Linux 上报 libnspr4.so 缺失等错误？
+
+Playwright 的 Chromium 需要系统共享库。运行 `npx playwright install-deps chromium` 即可一键安装（`setup.sh` 已自动执行此步骤）。
+
+### Q: Python 提示 "externally-managed-environment" 或 No module named pip？
+
+**pip 未安装**：`setup.sh` 会自动执行 `apt-get install python3-pip`。
+**PEP 668 限制**：`setup.sh` 检测到后会自动加 `--break-system-packages` 重试。
+
 ### Q: 程序出问题了怎么办？
 
-先试试双击 `cleanup-runtime.bat` 清理运行时垃圾（保留配置和依赖），然后重新 `npm start`。如果还不行，用 `cleanup.bat` 彻底还原后再运行 `setup.bat` 重新部署。
+先试试双击 `cleanup-runtime.bat`（Windows）或运行 `bash cleanup-runtime.sh`（macOS/Linux）清理运行时垃圾，然后重新 `npm start`。如果还不行，用 `cleanup.bat` / `cleanup.sh` 彻底还原后再运行 `setup.bat` / `setup.sh` 重新部署。
 
 ### Q: 如何确认邮件配置是否正确？
 
@@ -258,7 +271,7 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 |----|------|
 | `playwright` | 浏览器自动化，操作 Chrome |
 | `ddddocr` (Python) | 验证码识别引擎（核心，准确率~100%） |
-| `tesseract.js` | OCR 备选方案（ddddocr 不可用时回退） |
+| `tesseract.js` | OCR 备选方案（ddddocr 不可用时按需懒加载，不额外消耗启动时间） |
 | `sharp` | 验证码图片预处理 |
 | `node-notifier` | 桌面通知弹窗（跨平台） |
 | `nodemailer` | SMTP 邮件发送 |

@@ -15,6 +15,13 @@ if !errorlevel! neq 0 (
     pause
     exit /b 1
 )
+for /f "tokens=2 delims=v." %%i in ('node -v 2^>nul') do set NODE_MAJOR=%%i
+if !NODE_MAJOR! LSS 18 (
+    echo [X] Node.js 版本过低 ^(v!NODE_MAJOR!.x，需要 ^>= 18^)
+    echo     请升级: https://nodejs.org/
+    pause
+    exit /b 1
+)
 for /f "delims=" %%i in ('node -v 2^>nul') do echo [OK] Node.js %%i
 
 REM ---- 检测 Python ----
@@ -30,28 +37,19 @@ if "!PYTHON_CMD!"=="" (
 )
 for /f "delims=" %%i in ('!PYTHON_CMD! --version 2^>^&1') do echo [OK] Python (!PYTHON_CMD!) %%i
 
-REM ---- 检测浏览器（注册表） ----
-set "BROWSER_OK="
-reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" >nul 2>&1 && set BROWSER_OK=Chrome
-if "!BROWSER_OK!"=="" reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" >nul 2>&1 && set BROWSER_OK=Chrome
-if "!BROWSER_OK!"=="" where chrome >nul 2>&1 && set BROWSER_OK=Chrome
-if "!BROWSER_OK!"=="" reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" >nul 2>&1 && set BROWSER_OK=Edge
-if "!BROWSER_OK!"=="" reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" >nul 2>&1 && set BROWSER_OK=Edge
-if "!BROWSER_OK!"=="" where msedge >nul 2>&1 && set BROWSER_OK=Edge
-
-if not "!BROWSER_OK!"=="" (
-    echo [OK] 浏览器: !BROWSER_OK!
-) else (
-    echo [WARN] 未检测到系统浏览器
-    echo [..] 正在安装 Playwright 内置 Chromium（约180MB，仅首次）...
-    echo [..] 使用 npmmirror 镜像加速下载
-    set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
-    call npx playwright install chromium
+REM ---- 确保 pip 可用 ----
+!PYTHON_CMD! -m pip --version >nul 2>&1
+if !errorlevel! neq 0 (
+    echo [WARN] Python pip 未安装
+    echo [..] 尝试 python -m ensurepip...
+    !PYTHON_CMD! -m ensurepip --default-pip >nul 2>&1
     if !errorlevel! neq 0 (
-        echo [X] Chromium 安装失败，请手动执行: set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ ^&^& npx playwright install chromium
-    ) else (
-        echo [OK] Chromium 安装完成
+        echo [X] pip 安装失败，请重新运行 Python 安装程序并勾选 pip 选项
+        echo     https://www.python.org/downloads/
+        pause
+        exit /b 1
     )
+    echo [OK] pip 安装完成
 )
 
 echo.
@@ -74,6 +72,30 @@ if !errorlevel! neq 0 (
     echo [X] ddddocr 安装失败，请手动执行: pip install ddddocr
 ) else (
     echo [OK] ddddocr 安装完成
+)
+
+REM ---- 检测浏览器（npm install 之后，playwright 已可用） ----
+set "BROWSER_OK="
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" >nul 2>&1 && set BROWSER_OK=Chrome
+if "!BROWSER_OK!"=="" reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" >nul 2>&1 && set BROWSER_OK=Chrome
+if "!BROWSER_OK!"=="" where chrome >nul 2>&1 && set BROWSER_OK=Chrome
+if "!BROWSER_OK!"=="" reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" >nul 2>&1 && set BROWSER_OK=Edge
+if "!BROWSER_OK!"=="" reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" >nul 2>&1 && set BROWSER_OK=Edge
+if "!BROWSER_OK!"=="" where msedge >nul 2>&1 && set BROWSER_OK=Edge
+
+if not "!BROWSER_OK!"=="" (
+    echo [OK] 浏览器: !BROWSER_OK!
+) else (
+    echo [WARN] 未检测到系统浏览器
+    echo [..] 检查 Playwright 内置 Chromium...
+    echo [..] 使用 npmmirror 镜像加速下载
+    set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
+    call npx playwright install chromium
+    if !errorlevel! neq 0 (
+        echo [X] Chromium 安装失败，请手动执行: set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ ^&^& npx playwright install chromium
+    ) else (
+        echo [OK] Chromium 已就绪
+    )
 )
 
 echo.

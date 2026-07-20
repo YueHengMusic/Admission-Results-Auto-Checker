@@ -12,7 +12,7 @@
  *   node auto-checker.js --email-to=me@qq.com # 指定收件人
  *   node auto-checker.js --no-email          # 禁用邮件通知
  * 
- * OCR方案: ddddocr (Python, 主力) + tesseract.js (Node, 备选)
+ * OCR方案: ddddocr (Python, 主力) + tesseract.js (Node, 按需懒加载备选)
  */
 
 const { chromium } = require("playwright");
@@ -77,6 +77,7 @@ function loadConfig() {
   // 深度合并：文件配置覆盖默认值，跳过 _ 开头的注释键
   function merge(defaults, file) {
     const result = { ...defaults };
+    if (!file || typeof file !== "object") return result;  // null/非对象直接返回默认
     for (const key of Object.keys(result)) {
       if (key.startsWith("_")) continue;  // 跳过注释字段
       if (file[key] !== undefined) {
@@ -95,10 +96,30 @@ function loadConfig() {
 
 const CONFIG = loadConfig();
 
+// 类型强制转换：防止 config.json 中误填字符串类型导致计算异常
+// 注意：checkIntervalMinutes/browserRestartQueries/failureAlertThreshold 的 0 是合法值，不能用 ||
+CONFIG.checkIntervalMinutes = isNaN(Number(CONFIG.checkIntervalMinutes)) ? 10 : Number(CONFIG.checkIntervalMinutes);
+CONFIG.maxCaptchaRefetches = isNaN(Number(CONFIG.maxCaptchaRefetches)) ? 5 : Number(CONFIG.maxCaptchaRefetches);
+CONFIG.maxCandidatesPerCaptcha = isNaN(Number(CONFIG.maxCandidatesPerCaptcha)) ? 4 : Number(CONFIG.maxCandidatesPerCaptcha);
+CONFIG.candidateDelayMs = isNaN(Number(CONFIG.candidateDelayMs)) ? 3000 : Number(CONFIG.candidateDelayMs);
+CONFIG.captchaRefetchDelayMs = isNaN(Number(CONFIG.captchaRefetchDelayMs)) ? 5000 : Number(CONFIG.captchaRefetchDelayMs);
+CONFIG.headless = CONFIG.headless !== false;  // 只有明确设为 false 才显示窗口
+CONFIG.browserRestartQueries = isNaN(Number(CONFIG.browserRestartQueries)) ? 50 : Number(CONFIG.browserRestartQueries);
+CONFIG.browserRestartHours = isNaN(Number(CONFIG.browserRestartHours)) ? 6 : Number(CONFIG.browserRestartHours);
+CONFIG.failureAlertThreshold = isNaN(Number(CONFIG.failureAlertThreshold)) ? 6 : Number(CONFIG.failureAlertThreshold);
+if (CONFIG.smtp) {
+  CONFIG.smtp.port = isNaN(Number(CONFIG.smtp.port)) ? 465 : Number(CONFIG.smtp.port);
+  CONFIG.smtp.enabled = CONFIG.smtp.enabled === true || CONFIG.smtp.enabled === "true";
+  CONFIG.smtp.secure = CONFIG.smtp.secure !== false;
+}
+
 // 解析命令行参数
 for (const arg of process.argv.slice(2)) {
   if (arg === "--once") CONFIG.checkIntervalMinutes = 0;
-  else if (arg.startsWith("--interval=")) CONFIG.checkIntervalMinutes = parseInt(arg.split("=")[1]) || 10;
+  else if (arg.startsWith("--interval=")) {
+    const v = parseInt(arg.split("=")[1], 10);
+    CONFIG.checkIntervalMinutes = isNaN(v) ? 10 : v;
+  }
   else if (arg === "--headed") CONFIG.headless = false;  // 显示浏览器窗口
   else if (arg === "--no-email") CONFIG.smtp.enabled = false;
   else if (arg.startsWith("--email-to=")) CONFIG.smtp.to = arg.split("=")[1];
@@ -111,6 +132,16 @@ const RESULT_DIR = path.join(__dirname, "results");
 const COOKIE_FILE = path.join(__dirname, "session_cookies.json");
 
 if (!fs.existsSync(RESULT_DIR)) fs.mkdirSync(RESULT_DIR, { recursive: true });
+
+// 启动校验：防止使用默认假号直接查询
+if (!CONFIG.examNumber || CONFIG.examNumber === "12345678901") {
+  console.error("❌ 请先在 config.json 中填写正确的准考证号 (examNumber) 和身份证后4位 (idLast4)！");
+  process.exit(1);
+}
+if (!CONFIG.idLast4 || CONFIG.idLast4 === "1234" || CONFIG.idLast4.length !== 4) {
+  console.error("❌ 请先在 config.json 中填写正确的身份证后4位 (idLast4，需为4位)！");
+  process.exit(1);
+}
 
 // ===================== 工具函数 =====================
 
@@ -129,6 +160,15 @@ function log(message) {
 /** Promise 版延迟 */
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+/** HTML 转义，防止邮件内容注入 */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /**
@@ -240,9 +280,9 @@ async function sendTestEmail(queryResult) {
   
   if (!mailTransporter) initMailer();
   
-  const nameMatch = queryResult.html ? queryResult.html.match(/<span class="kname">([^<]+)<\/span>/) : null; // 见 extractStudentName()
-  const studentName = nameMatch ? nameMatch[1].trim() : "未知";
-  const statusText = queryResult.found ? "已录取" : (queryResult.message || "查询成功");
+  const nameMatch = queryResult.html ? queryResult.html.match(/<span class="kname">([^<]+)<\/span>/) : null;
+  const studentName = escapeHtml(nameMatch ? nameMatch[1].trim() : "未知");
+  const statusText = escapeHtml(queryResult.found ? "已录取" : (queryResult.message || "查询成功"));
   
   log("  📧 发送测试邮件（含查询结果验证）...");
   
@@ -280,7 +320,7 @@ async function sendTestEmail(queryResult) {
     </body></html>
   `;
   
-  // 发送测试邮件（重试2次）
+  // 发送测试邮件（共2次尝试，间隔15秒）
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const info = await mailTransporter.sendMail({
@@ -311,8 +351,8 @@ async function sendTestEmail(queryResult) {
 async function sendStatusChangeEmail(oldStatus, newStatus, details, screenshotPath, danger = false) {
   if (!CONFIG.smtp.enabled || !mailTransporter) return;
   
-  const school = details?.["院校名称"] || "";
-  const statusText = oldStatus ? `${oldStatus} → ${newStatus}` : `当前状态: ${newStatus}`;
+  const school = escapeHtml(details?.["院校名称"] || "");
+  const statusText = oldStatus ? `${escapeHtml(oldStatus)} → ${escapeHtml(newStatus)}` : `当前状态: ${escapeHtml(newStatus)}`;
   const emoji = danger ? "⚠️" : (oldStatus ? "🔄" : "📋");
   const title = danger ? "⚠️ 录取状态警告" : (oldStatus ? "录取状态更新" : "检测到投档信息");
   
@@ -320,7 +360,7 @@ async function sendStatusChangeEmail(oldStatus, newStatus, details, screenshotPa
   if (details) {
     for (const [key, value] of Object.entries(details)) {
       if (key === "考生状态") continue;
-      detailRows += `<tr><td>${key}</td><td>${value}</td></tr>`;
+      detailRows += `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(String(value))}</td></tr>`;
     }
   }
 
@@ -368,15 +408,15 @@ async function sendEmailNotification(details, screenshotPath) {
   }
   if (!mailTransporter) initMailer();
   
-  const school = details?.["院校名称"] || "";
-  const major = details?.["专业名称"] || "";
+  const school = escapeHtml(details?.["院校名称"] || "");
+  const major = escapeHtml(details?.["专业名称"] || "");
   
   // 构建录取详情表格行
   let detailRows = "";
   if (details && Object.keys(details).length > 0) {
     for (const [key, value] of Object.entries(details)) {
       if (key === "姓名" || key === "准考证号" || key === "考生号") continue; // 基本信息已在标题区
-      detailRows += `<tr><td>${key}</td><td>${value}</td></tr>`;
+      detailRows += `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(String(value))}</td></tr>`;
     }
   }
   
@@ -393,9 +433,9 @@ async function sendEmailNotification(details, screenshotPath) {
         
         <div class="section"><div class="section-label">基本信息</div>
         <table class="info">
-          <tr><td>姓名</td><td>${details?.["姓名"] || ""}</td></tr>
-          <tr><td>准考证号</td><td>${details?.["准考证号"] || CONFIG.examNumber}</td></tr>
-          <tr><td>考生号</td><td>${details?.["考生号"] || ""}</td></tr>
+          <tr><td>姓名</td><td>${escapeHtml(details?.["姓名"] || "")}</td></tr>
+          <tr><td>准考证号</td><td>${escapeHtml(details?.["准考证号"] || CONFIG.examNumber)}</td></tr>
+          <tr><td>考生号</td><td>${escapeHtml(details?.["考生号"] || "")}</td></tr>
         </table>
         
         <div class="section"><div class="section-label">录取详情</div>
@@ -417,7 +457,7 @@ async function sendEmailNotification(details, screenshotPath) {
     });
   }
   
-  // 发送邮件（最多重试3次，间隔30秒，应对临时网络故障）
+  // 发送邮件（共3次尝试，间隔30秒，应对临时网络故障）
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const info = await mailTransporter.sendMail({
@@ -446,7 +486,7 @@ async function sendEmailNotification(details, screenshotPath) {
 
 /** 保存浏览器Cookie到文件，下次启动恢复 */
 function saveCookies(cookies) {
-  fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies, null, 2));
+  fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies, null, 2), { mode: 0o600 });
   log("  → 会话已保存");
 }
 
@@ -463,18 +503,59 @@ function loadCookies() {
 // ===================== OCR（ddddocr主力 + tesseract备选） =====================
 
 const PYTHON_CMD = (() => {
-  // 跨平台检测：Windows 用 py→python 回退，其他平台 python3→python 回退
+  // 跨平台检测：Windows 用 where（PATH查找，不启动解释器），其他平台用 command -v
   if (process.platform === "win32") {
-    try { require("child_process").execSync("py --version", { stdio: "ignore" }); return "py"; } catch {}
-    try { require("child_process").execSync("python --version", { stdio: "ignore" }); return "python"; } catch {}
+    try { require("child_process").execSync("where py", { stdio: "ignore" }); return "py"; } catch {}
+    try { require("child_process").execSync("where python", { stdio: "ignore" }); return "python"; } catch {}
     return "py"; // 最后尝试
   }
-  try { require("child_process").execSync("python3 --version", { stdio: "ignore" }); return "python3"; } catch {}
-  try { require("child_process").execSync("python --version", { stdio: "ignore" }); return "python"; } catch {}
+  try { require("child_process").execSync("command -v python3", { stdio: "ignore" }); return "python3"; } catch {}
+  try { require("child_process").execSync("command -v python", { stdio: "ignore" }); return "python"; } catch {}
   return "python3";
 })();
 let ocrWorker = null;
+let tesseractLoading = false;   // 防止并发初始化
+let tesseractFailed = false;    // 初始化失败后不再重试
 let ddddocrAvailable = null;  // null=未检测, true=可用, false=不可用
+
+/**
+ * 懒加载 tesseract.js（仅在 ddddocr 回退时首次调用，避免启动时下载15MB语言包）
+ */
+async function ensureTesseract() {
+  if (ocrWorker) return true;
+  if (tesseractFailed) return false;
+  if (tesseractLoading) {
+    // 已有初始化在进行中，等待完成
+    for (let i = 0; i < 30; i++) {
+      await sleep(1000);
+      if (ocrWorker) return true;
+      if (tesseractFailed) return false;
+    }
+    return false;
+  }
+  
+  tesseractLoading = true;
+  try {
+    log("  → ddddocr 不可用，正在加载 tesseract 备选引擎（首次需下载语言包，约15MB）...");
+    const { createWorker } = require("tesseract.js");
+    ocrWorker = await createWorker("eng", 1, {
+      logger: m => {
+        if (m.status === "downloading") {
+          const pct = m.progress ? Math.round(m.progress * 100) : 0;
+          if (pct > 0 && pct % 20 === 0) log(`  → 下载中... ${pct}%`);
+        }
+      },
+    });
+    log("  ✓ tesseract 备选引擎就绪");
+    return true;
+  } catch (e) {
+    log(`  ⚠ tesseract 初始化失败: ${e.message}`);
+    tesseractFailed = true;
+    return false;
+  } finally {
+    tesseractLoading = false;
+  }
+}
 
 /**
  * 调用 ddddocr（Python）识别验证码，返回结果或 null
@@ -482,7 +563,8 @@ let ddddocrAvailable = null;  // null=未检测, true=可用, false=不可用
 function ocrViaDdddocr(imagePath) {
   if (ddddocrAvailable === false) return null;
   
-  // 最多重试3次（应对 Python 偶尔超时等瞬时故障）
+  // 重试逻辑：Python异常 OR 非4位字母数字结果各重试最多3次；
+  // 3次均失败则标记 ddddocr 不可用，后续回退 tesseract
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const { execSync } = require("child_process");
@@ -498,32 +580,15 @@ function ocrViaDdddocr(imagePath) {
     }
     // 格式不对（非4位字母数字），继续重试
     } catch (e) {
-      if (attempt === 2) {
-        if (ddddocrAvailable === null) {
-          log("  ⚠ ddddocr 不可用，回退到 tesseract.js");
-          ddddocrAvailable = false;
-        }
-        return null;
-      }
+      // Python 异常，继续重试（最后一次时才标记不可用）
     }
   }
+  // 3次全部失败，标记 ddddocr 不可用
+  if (ddddocrAvailable === null) {
+    log("  ⚠ ddddocr 不可用，回退到 tesseract.js");
+    ddddocrAvailable = false;
+  }
   return null;
-}
-
-async function loadOCR() {  // 初始化tesseract.js作为备选引擎
-  // 初始化tesseract.js作为备选（ddddocr不可用时回退）
-  log("  正在加载 OCR 引擎（首次需下载语言包，约15MB，请耐心等待）...");
-  const { createWorker } = require("tesseract.js");
-  ocrWorker = await createWorker("eng", 1, {
-    logger: m => {
-      if (m.status === "downloading") {
-        // 显示下载进度
-        const pct = m.progress ? Math.round(m.progress * 100) : 0;
-        if (pct > 0 && pct % 20 === 0) log(`  下载中... ${pct}%`);
-      }
-    },
-  });
-  log("  OCR 引擎就绪 (ddddocr + tesseract)");
 }
 
 /**
@@ -535,8 +600,14 @@ async function recognizeCaptchaMulti(imagePath) {
   const sharp = require("sharp");
   const worker = ocrWorker;
   const originalBuf = fs.readFileSync(imagePath);
-  const metadata = await sharp(originalBuf).metadata();
-  const W = metadata.width, H = metadata.height;
+  let W = 64, H = 30;  // 已知验证码尺寸作为默认值
+  try {
+    const metadata = await sharp(originalBuf).metadata();
+    W = metadata.width || W;
+    H = metadata.height || H;
+  } catch (e) {
+    // sharp 解析失败（如图片损坏），使用默认尺寸继续
+  }
   
   const seen = new Set();
   const candidates = [];
@@ -562,6 +633,21 @@ async function recognizeCaptchaMulti(imagePath) {
   }
   
   // ddddocr 未命中，回退 tesseract 多策略
+  if (!ocrWorker && !tesseractFailed) {
+    const loaded = await ensureTesseract();
+    if (!loaded) {
+      // tesseract 不可用，返回 ddddocr 结果（如果有）
+      if (ddddResult) add(ddddResult, 80, "ddddocr");
+      candidates.sort((a, b) => b.confidence - a.confidence);
+      return candidates;
+    }
+  }
+  if (!ocrWorker) {
+    // tesseract 未初始化，只能返回 ddddocr 的结果（如果有）或空
+    if (ddddResult) add(ddddResult, 80, "ddddocr");
+    candidates.sort((a, b) => b.confidence - a.confidence);
+    return candidates;
+  }
   if (ddddocrAvailable !== false) {
     // ddddocr 已加载但本次没识别出来（非首次不可用的情况）
     log("  → ddddocr 未命中，尝试 tesseract...");
@@ -595,7 +681,8 @@ async function recognizeCaptchaMulti(imagePath) {
  *   访问页面 → 获取验证码 → OCR识别 → 提交表单 → 解析结果 → 截图
  * @param {BrowserContext} context - Playwright 浏览器上下文
  * @returns {Promise<{found:boolean, message:string, html?:string, details?:object,
- *           screenshot?:string, captchaError?:boolean, inputError?:boolean}>}
+ *           screenshotBuf?:Buffer, htmlContent?:string, captchaError?:boolean,
+ *           inputError?:boolean}>}
  */
 async function executeQuery(context) {
   const page = await context.newPage();
@@ -647,10 +734,22 @@ async function executeQuery(context) {
       await page.fill("#key2", CONFIG.idLast4);
       await page.fill(".code", captcha);
       
+      let navOk = true;
       await Promise.all([
-        page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => {}),
+        page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }).catch(() => { navOk = false; }),
         page.click(".inquire"),
       ]);
+      
+      if (!navOk) {
+        // 导航超时：可能点击无效或网络问题，检查当前页面状态
+        const stillOnForm = await page.$("#key1").catch(() => null);
+        if (stillOnForm) {
+          log(`  → "${captcha}" 提交后页面未跳转，可能验证码错误`);
+          await sleep(CONFIG.candidateDelayMs);
+          continue;
+        }
+        log(`  ⚠ 页面跳转超时，继续尝试解析...`);
+      }
       
       // 确认导航完成后再检查（避免读旧页面）
       try { await page.waitForSelector(".tipswz, .enro-result, .kname", { timeout: 10000 }); } catch {}
@@ -705,8 +804,24 @@ async function executeQuery(context) {
 }
 
 /**
+ * HTML → 纯文本（去除 script/style/标签/nbsp，合并空白）
+ */
+function stripHtml(html) {
+  return html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * 解析服务器返回的HTML，判断录取状态
- * 
+ *
+ * @param {string} html - 查询结果页的完整 HTML
+ * @returns {{found:boolean, message:string, details?:object, html?:string,
+ *           plainText?:string, captchaError?:boolean, unknown?:boolean, fallback?:boolean}}
+ *
  * 录取结果表格结构（当有录取信息时，第二个td/th会填充数据）：
  *   <table class="enro-result">
  *     <tr><th>考生状态</th><th class="lqzt">...</th></tr>
@@ -741,7 +856,7 @@ function parseResultPage(html) {
   const idMatch = html.match(/<span class="kksh">(\d+)<\/span>/);
   if (idMatch) details["考生号"] = idMatch[1];
   
-  // ---- 录取信息提取：CSS class 精确匹配（优先，不受页面其他区域干扰） ----
+  // ---- 录取信息提取：CSS class 正则匹配（支持 class 后缀如 lqzt-hover，不受页面其他区域干扰） ----
   if (html.includes("enro-result")) {
     const fieldMap = {
       "lqzt": "考生状态", "yxdh": "院校代号", "yxmc": "院校名称",
@@ -758,7 +873,7 @@ function parseResultPage(html) {
       }
     }
     if (hasAnyData) {
-      const plainText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+      const plainText = stripHtml(html);
       return { found: true, message: "🎉 检测到录取信息！", details, plainText: plainText.substring(0, 3000) };
     }
   }
@@ -775,18 +890,19 @@ function parseResultPage(html) {
   // ---- 兜底：页面有关键录取词但CSS class不匹配（网站改版） ----
   const admissionKeywords = ["录取院校", "院校名称", "录取专业", "专业名称", "录取批次", "考生状态"];
   if (admissionKeywords.some(k => html.includes(k))) {
-    const plainText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+    const plainText = stripHtml(html);
     return { found: true, message: "🎉 检测到录取信息（兜底匹配）！", details, plainText: plainText.substring(0, 3000), fallback: true };
   }
   
-  const snippet = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 200);
+  const snippet = stripHtml(html);
   return { found: false, message: `未知响应: ${snippet.substring(0, 100)}`, unknown: true };
 }
 
 // ===================== 主循环 =====================
 
 /**
- * 主函数：启动浏览器，进入轮询循环，全程ddddocr自动识别
+ * 主函数：启动浏览器，进入轮询循环，ddddocr 自动识别验证码
+ *   - ddddocr 不可用时自动懒加载 tesseract.js 备选
  *   - 首次查询成功后发送测试邮件（验证 SMTP + 查询 + 考生信息）
  *   - 录取后桌面弹窗3次(间隔10分钟)，30分钟后自动退出
  */
@@ -801,9 +917,6 @@ async function main() {
   log(`  查询间隔: ${CONFIG.checkIntervalMinutes === 0 ? "仅一次" : CONFIG.checkIntervalMinutes + " 分钟"}`);
   log(`  邮件通知: ${CONFIG.smtp.enabled ? "已启用 → " + CONFIG.smtp.to : "未启用"}`);
   log("=".repeat(55));
-  
-  // 初始化OCR（无论哪种模式，后续轮询都需要）
-  await loadOCR();
   
   // 初始化邮件（如果启用）
   initMailer();
@@ -871,10 +984,24 @@ async function main() {
    */
   async function restartBrowser() {
     log("├─ 🔄 重启浏览器释放内存...");
+    // 重置 ddddocr 可用性检测，给它一次恢复机会（可能只是临时故障）
+    if (ddddocrAvailable === false) {
+      ddddocrAvailable = null;
+      log("├─ 🔄 重新检测 ddddocr...");
+    }
+    // 保存当前 cookie 再关闭旧浏览器
+    try { saveCookies(await context.cookies()); } catch (e) { /* */ }
     await context.close().catch(() => {});
     await browser.close().catch(() => {});
     
-    const newBrowser = await chromium.launch(launchOptions);
+    const newBrowser = await chromium.launch(launchOptions).catch(err => {
+      log(`├─ ❌ 浏览器重启失败: ${err.message}`);
+      return null;
+    });
+    if (!newBrowser) {
+      log("└─ 无法重启浏览器，程序退出");
+      process.exit(1);
+    }
     const newContext = await newBrowser.newContext({
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       viewport: { width: 1280, height: 800 },
@@ -923,8 +1050,12 @@ async function main() {
       }
       
       // 保存cookie
-      const cookies = await context.cookies();
-      saveCookies(cookies);
+      try {
+        const cookies = await context.cookies();
+        saveCookies(cookies);
+      } catch (e) {
+        // 浏览器已关闭等情况下忽略
+      }
       
       if (!querySuccess || !finalResult) {
         log("├─ 所有尝试均失败");
@@ -1039,6 +1170,9 @@ async function main() {
           if (nameMatch) log(`├─ 考生: ${nameMatch[1].trim()}`);
         }
         consecutiveFailures = 0;  // 查询成功，重置失败计数
+      } else {
+        // 查询成功但暂无录取 — 也重置失败计数
+        consecutiveFailures = 0;
       }
       
       // 首次查询成功后发送测试邮件（验证SMTP+查询功能+考生信息）
@@ -1080,6 +1214,10 @@ async function main() {
 function cleanup() {
   const tmp = path.join(__dirname, "temp_captcha.png");
   try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) { /* */ }
+  // 终止 tesseract worker
+  if (ocrWorker) {
+    try { ocrWorker.terminate(); } catch (e) { /* */ }
+  }
 }
 
 process.on("SIGINT", () => {
@@ -1094,6 +1232,12 @@ process.on("SIGTERM", () => {
 });
 
 process.on("exit", () => cleanup());
+
+// 未处理的 Promise 拒绝兜底
+process.on("unhandledRejection", (reason) => {
+  log(`⚠ 未捕获的异步错误: ${reason?.message || reason}`);
+  // 不退出，仅记录日志，保持程序继续运行
+});
 
 main().catch(err => {
   log(`程序异常: ${err.message}`);

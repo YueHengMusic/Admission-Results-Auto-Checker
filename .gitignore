@@ -3,9 +3,6 @@ results/
 *.log
 temp_*.png
 captcha*.png
-query_result*.html
-result_browser.*
-last_response.html
 *.traineddata
 session_cookies.json
 config.json

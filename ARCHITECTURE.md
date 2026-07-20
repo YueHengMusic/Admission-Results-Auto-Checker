@@ -127,7 +127,7 @@ title: "江西省2026年普通高考成绩及录取查询结果"
 
 - **Windows**：注册表检测 Chrome → Edge → Playwright 内置 Chromium
 - **macOS / Linux**：直接使用 Playwright 内置 Chromium（系统浏览器路径不稳定，内置更可靠）
-- 内置 Chromium 首次需下载约 180MB，`setup` 脚本会自动处理
+- 内置 Chromium 首次需下载约 180MB，`setup` 脚本会自动处理（Linux 还会自动安装系统依赖库）
 
 ---
 
@@ -143,12 +143,12 @@ title: "江西省2026年普通高考成绩及录取查询结果"
     │
     ├── ddddocr (Python, ~1秒) → 命中 → 直接返回 ✅
     │
-    └── 未命中 → tesseract.js 多策略（备选）
+    └── 未命中 → 懒加载 tesseract.js 并多策略识别（备选，仅首次失败时下载）
         ├── 12x放大 + PSM 7/8/6 + 无白名单
         └── 去重排序 → 逐候选提交
 ```
 
-**调用方式：** Node.js 通过 `child_process.execSync` 调用 `py ocr_server.py <image>`，stdout 输出结果。首次调用失败则标记 ddddocr 不可用，后续自动回退 tesseract。
+**调用方式：** Node.js 通过 `child_process.execSync` 调用 `py ocr_server.py <image>`，stdout 输出结果。连续 3 次失败则标记 ddddocr 不可用，后续自动回退 tesseract。浏览器重启或进程重启时重置标记，给 ddddocr 恢复机会。
 
 ### 4.2 候选尝试与限流
 
@@ -186,9 +186,9 @@ auto-checker.js
 │   └── loadCookies()       # 下次启动恢复
 │
 ├── OCR 模块
-│   ├── ocr_server.py      # ddddocr Python 脚本（主力）
+│   ├── ocr_server.py      # ddddocr Python 脚本（27行，供 Node 调用）
 │   ├── ocrViaDdddocr()    # Node→Python 调用，~1秒出结果
-│   ├── loadOCR()          # 初始化 tesseract.js worker（备选）
+│   ├── ensureTesseract()  # 懒加载 tesseract.js worker（ddddocr 失败时按需初始化）
 │   └── recognizeCaptchaMulti()  # ddddocr优先 → tesseract回退
 │
 ├── 核心查询
@@ -208,7 +208,6 @@ auto-checker.js
 │
 └── 主循环 main()
     ├── 启动浏览器
-    ├── 加载 OCR
     ├── 初始化邮件（如启用）
     ├── 恢复 Session Cookie
     └── while(true)
@@ -267,9 +266,9 @@ auto-checker.js
 
 ### 6.7 长期运行保障
 
-- **浏览器内存释放**：每 N 次查询或 N 小时后自动重启浏览器（`browserRestartQueries` / `browserRestartHours` 可配）
-- **失败告警**：连续 N 次查询全部失败时自动发送告警邮件（`failureAlertThreshold` 可配）
-- **邮件重试**：录取通知邮件失败后自动重试最多 3 次（间隔 30 秒）
+- **浏览器内存释放**：每 N 次查询或 N 小时后自动重启浏览器（`browserRestartQueries` / `browserRestartHours` 可配）。重启时同步重置 ddddocr 可用性标记，给 OCR 引擎恢复机会
+- **失败告警**：连续 N 次查询全部失败时自动发送告警邮件（`failureAlertThreshold` 可配）；单次成功即使"暂无录取"也重置计数，避免误告警
+- **邮件重试**：录取通知邮件失败后共尝试 3 次（间隔 30 秒），测试邮件共尝试 2 次
 - **页面解析泛化**：CSS class 匹配 + 关键词兜底 + "暂无录取"10 种变体覆盖，网站改版不漏报
 - **状态追踪**：持续监测考生状态变化，支持全状态链路
 

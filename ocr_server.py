@@ -17,10 +17,18 @@ def main():
         sys.exit(1)
 
     image_path = sys.argv[1]
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
+    try:
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+    except (FileNotFoundError, PermissionError, OSError) as e:
+        print(f"ERROR: Cannot read image: {e}", file=sys.stderr)
+        sys.exit(2)
 
-    result = ocr.classification(image_bytes)
+    try:
+        result = ocr.classification(image_bytes)
+    except Exception as e:
+        print(f"ERROR: OCR failed: {e}", file=sys.stderr)
+        sys.exit(3)
     print(result)  # stdout → Node.js 接收
 
 if __name__ == "__main__":
