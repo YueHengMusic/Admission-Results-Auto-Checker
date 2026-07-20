@@ -874,7 +874,7 @@ function parseResultPage(html) {
     }
     if (hasAnyData) {
       const plainText = stripHtml(html);
-      return { found: true, message: "🎉 检测到录取信息！", details, plainText: plainText.substring(0, 3000) };
+      return { found: true, message: "📋 检测到相关结果", details, plainText: plainText.substring(0, 3000) };
     }
   }
   
@@ -891,7 +891,7 @@ function parseResultPage(html) {
   const admissionKeywords = ["录取院校", "院校名称", "录取专业", "专业名称", "录取批次", "考生状态"];
   if (admissionKeywords.some(k => html.includes(k))) {
     const plainText = stripHtml(html);
-    return { found: true, message: "🎉 检测到录取信息（兜底匹配）！", details, plainText: plainText.substring(0, 3000), fallback: true };
+    return { found: true, message: "📋 检测到相关结果（兜底匹配）", details, plainText: plainText.substring(0, 3000), fallback: true };
   }
   
   const snippet = stripHtml(html);
@@ -1081,6 +1081,15 @@ async function main() {
         const isDanger = DANGER_KEYWORDS.some(s => currentStatus.includes(s));
         const isFinal = isFinalStatus(currentStatus);
         
+        // 根据实际状态覆盖结果消息
+        if (isFinal) {
+          finalResult.message = "🎉 正式录取！";
+        } else if (isDanger) {
+          finalResult.message = `⚠️ 危险状态：${currentStatus}`;
+        } else {
+          finalResult.message = `📋 当前状态：${currentStatus}`;
+        }
+        
         // 状态变化或首次检测：写入截图/HTML到磁盘，发邮件
         const statusChangedOrNew = !lastAdmissionStatus || statusChanged;
         let screenshotPath = null;
@@ -1093,47 +1102,68 @@ async function main() {
           log(`├─ 截图: ${screenshotPath}`);
         }
         
-        // 首次出现数据：通知用户
+        // ---- 横幅 + 详情 + 通知 ----
         if (!lastAdmissionStatus) {
+          // 首次出现数据
           log("├─ ╔══════════════════════════════════════╗");
-          log("├─ ║  📋  检 测 到 投 档 信 息 ！        ║");
+          log(`├─ ║  ${finalResult.message}${" ".repeat(Math.max(0, 34 - finalResult.message.length))}║`);
           log("├─ ╚══════════════════════════════════════╝");
+          if (isFinal) {
+            // 首次查到就是录取 → 直接走最终通知
+            log("├─");
+            await sendEmailNotification(finalResult.details, screenshotPath);
+            const school = finalResult.details?.["院校名称"] || "";
+            sendDesktopNotification("🎉 高考录取结果已出！", school ? `你已被 ${school} 录取！` : "请查看录取详情");
+            log("├─ 💬 将在 10/20/30 分钟后各弹窗提醒一次，按 Ctrl+C 可随时退出");
+            for (let i = 1; i <= 3; i++) {
+              sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
+              await sleep(10 * 60 * 1000);
+              log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
+            }
+            log("└─ 提醒结束，程序退出");
+            lastAdmissionStatus = currentStatus;
+            break;
+          }
           log("├─");
-          log(`├─ 当前状态: ${currentStatus}`);
           log("├─ 程序将持续监测状态变化，正式录取时停止");
           for (const [key, value] of Object.entries(finalResult.details)) {
             if (key !== "考生状态") log(`├─   ${key}: ${value}`);
           }
-          sendDesktopNotification("📋 检测到投档信息", `当前状态: ${currentStatus}`);
+          sendDesktopNotification(isDanger ? "⚠️ 检测到危险状态" : "📋 检测到投档信息", `当前状态: ${currentStatus}`);
           if (CONFIG.smtp.enabled) {
             await sendStatusChangeEmail(null, currentStatus, finalResult.details, screenshotPath);
           }
-        }
-        // 状态变化
-        else if (statusChanged) {
+        } else if (statusChanged) {
+          // 状态发生变化
           log("├─ ╔══════════════════════════════════════╗");
-          log("├─ ║  🔄  录 取 状 态 更 新 ！           ║");
+          log(`├─ ║  🔄 ${finalResult.message}${" ".repeat(Math.max(0, 32 - finalResult.message.length))}║`);
           log("├─ ╚══════════════════════════════════════╝");
-          log(`├─ 状态变化: ${lastAdmissionStatus} → ${currentStatus}`);
+          log(`├─ 上次状态: ${lastAdmissionStatus}`);
           for (const [key, value] of Object.entries(finalResult.details)) {
             if (key !== "考生状态") log(`├─   ${key}: ${value}`);
           }
-          
-          if (isDanger) {
-            log("├─ ⚠️ 警告：当前状态为危险状态，请关注！");
-            sendDesktopNotification("⚠️ 录取状态警告", `${lastAdmissionStatus} → ${currentStatus}`);
-          } else {
-            sendDesktopNotification("🔄 录取状态更新", `${lastAdmissionStatus} → ${currentStatus}`);
+          if (isFinal) {
+            // 变为录取 → 最终通知
+            log("├─");
+            await sendEmailNotification(finalResult.details, screenshotPath);
+            const school = finalResult.details?.["院校名称"] || "";
+            sendDesktopNotification("🎉 高考录取结果已出！", school ? `你已被 ${school} 录取！` : "请查看录取详情");
+            log("├─ 💬 将在 10/20/30 分钟后各弹窗提醒一次，按 Ctrl+C 可随时退出");
+            for (let i = 1; i <= 3; i++) {
+              sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
+              await sleep(10 * 60 * 1000);
+              log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
+            }
+            log("└─ 提醒结束，程序退出");
+            lastAdmissionStatus = currentStatus;
+            break;
           }
-          
+          sendDesktopNotification(isDanger ? "⚠️ 录取状态警告" : "🔄 录取状态更新", `${lastAdmissionStatus} → ${currentStatus}`);
           if (CONFIG.smtp.enabled) {
             await sendStatusChangeEmail(lastAdmissionStatus, currentStatus, finalResult.details, screenshotPath, isDanger);
           }
-        }
-        // 状态未变
-        else {
-          log("├─ 📋 状态未变");
-          log(`├─ 当前状态: ${currentStatus}`);
+        } else {
+          // 状态未变
           if (finalResult.html) {
             const nameMatch = finalResult.html.match(/<span class="kname">([^<]+)<\/span>/);
             if (nameMatch) log(`├─ 考生: ${nameMatch[1].trim()}`);
@@ -1141,35 +1171,8 @@ async function main() {
         }
         
         lastAdmissionStatus = currentStatus;
-        
-        // 最终录取 → 停止查询
-        if (isFinal) {
-          log("├─");
-          log("├─ ╔══════════════════════════════════════╗");
-          log("├─ ║  🎉🎉  正 式 录 取 ！  🎉🎉        ║");
-          log("├─ ╚══════════════════════════════════════╝");
-          log("├─");
-          await sendEmailNotification(finalResult.details, screenshotPath);
-          const school = finalResult.details?.["院校名称"] || "";
-          sendDesktopNotification("🎉 高考录取结果已出！", school ? `你已被 ${school} 录取！` : "请查看录取详情");
-          
-          log("├─ 💬 将在 10/20/30 分钟后各弹窗提醒一次，按 Ctrl+C 可随时退出");
-          for (let i = 1; i <= 3; i++) {
-            sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
-            await sleep(10 * 60 * 1000);
-            log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
-          }
-          log("└─ 提醒结束，程序退出");
-          break;
-        }
         log(`├─ 结果: ${finalResult.message}`);
-        
-        // 显示考生姓名确认
-        if (finalResult.html) {
-          const nameMatch = finalResult.html.match(/<span class="kname">([^<]+)<\/span>/);
-          if (nameMatch) log(`├─ 考生: ${nameMatch[1].trim()}`);
-        }
-        consecutiveFailures = 0;  // 查询成功，重置失败计数
+        consecutiveFailures = 0;
       } else {
         // 查询成功但暂无录取 — 也重置失败计数
         consecutiveFailures = 0;
