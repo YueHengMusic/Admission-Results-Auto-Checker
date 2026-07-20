@@ -41,8 +41,10 @@ if [ -n "$BROWSER" ]; then
     echo "[OK] 浏览器: $BROWSER"
 else
     echo "[WARN] 未检测到系统浏览器"
-    echo "[..] 正在安装 Playwright 内置 Chromium..."
-    npx playwright install chromium || echo "[X] Chromium 安装失败"
+    echo "[..] 正在安装 Playwright 内置 Chromium（约180MB，仅首次）..."
+    echo "[..] 使用 npmmirror 镜像加速下载"
+    export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
+    npx playwright install chromium && echo "[OK] Chromium 安装完成" || echo "[X] Chromium 安装失败，请手动: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ npx playwright install chromium"
 fi
 
 echo

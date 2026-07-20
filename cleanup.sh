@@ -21,16 +21,10 @@ for f in captcha*.png test_captcha.jpg; do [ -f "$f" ] && { rm -f "$f"; echo "[O
 [ -d results ]               && { rm -rf results;              echo "[OK] results/";              ((DELETED++)); } || echo "[--] results/"
 [ -f config.json ]           && { rm -f config.json;           echo "[OK] config.json";           ((DELETED++)); } || echo "[--] config.json"
 
-# Chromium 提示不自动删（可能影响其他 Playwright 项目）
-echo "[--] Playwright Chromium (可能影响其他项目，未自动删除)"
-echo "     如需清理: rm -rf ~/Library/Caches/ms-playwright  # macOS"
-echo "               rm -rf ~/.cache/ms-playwright          # Linux"
-echo "               rmdir /s /q %LOCALAPPDATA%\\ms-playwright  # Windows"
-
 # node_modules
 if [ -d node_modules ]; then
     rm -rf node_modules
-    echo "[OK] node_modules/（下次运行 setup 会重新安装）"
+    echo "[OK] node_modules/（下次运行 setup 会重新部署）"
     ((DELETED++))
 else
     echo "[--] node_modules/"
@@ -41,7 +35,8 @@ echo "============================================"
 echo "  清理完成！共删除 ${DELETED} 个文件/目录"
 echo "============================================"
 echo
-echo "  ddddocr 安装在系统 Python 中，未自动卸载。"
+echo "  温馨提示："
+echo "    ddddocr 安装在系统 Python 中，未自动卸载。"
 echo "     如需卸载: pip uninstall ddddocr -y"
 echo
 echo "  Playwright Chromium 可能影响其他项目，未自动删除。"

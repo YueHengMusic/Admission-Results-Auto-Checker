@@ -6,27 +6,82 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================
-echo   清理项目垃圾（还原始项目状态）
+echo   清理项目（还原到 clone 状态）
 echo ============================================
 echo.
 
 set DELETED=0
 
 REM ---- 运行时临时文件 ----
-if exist auto-checker.log      (del /q auto-checker.log      && echo [OK] auto-checker.log      && set /a DELETED+=1) else (echo [--] auto-checker.log)
-if exist session_cookies.json  (del /q session_cookies.json  && echo [OK] session_cookies.json  && set /a DELETED+=1) else (echo [--] session_cookies.json)
-if exist .email_tested         (del /q .email_tested         && echo [OK] .email_tested         && set /a DELETED+=1) else (echo [--] .email_tested)
-if exist eng.traineddata       (del /q eng.traineddata       && echo [OK] eng.traineddata       && set /a DELETED+=1) else (echo [--] eng.traineddata)
-if exist temp_captcha.png      (del /q temp_captcha.png      && echo [OK] temp_captcha.png      && set /a DELETED+=1) else (echo [--] temp_captcha.png)
-if exist captcha*.png          (del /q captcha*.png 2>nul)
-if exist test_captcha.jpg      (del /q test_captcha.jpg      && set /a DELETED+=1)
-if exist results               (rmdir /s /q results          && echo [OK] results\              && set /a DELETED+=1) else (echo [--] results\)
-if exist config.json           (del /q config.json           && echo [OK] config.json           && set /a DELETED+=1) else (echo [--] config.json)
+if exist auto-checker.log (
+    del /q auto-checker.log
+    echo [OK] auto-checker.log
+    set /a DELETED+=1
+) else (
+    echo [--] auto-checker.log
+)
+if exist session_cookies.json (
+    del /q session_cookies.json
+    echo [OK] session_cookies.json
+    set /a DELETED+=1
+) else (
+    echo [--] session_cookies.json
+)
+if exist .email_tested (
+    del /q .email_tested
+    echo [OK] .email_tested
+    set /a DELETED+=1
+) else (
+    echo [--] .email_tested
+)
+if exist eng.traineddata (
+    del /q eng.traineddata
+    echo [OK] eng.traineddata
+    set /a DELETED+=1
+) else (
+    echo [--] eng.traineddata
+)
+if exist temp_captcha.png (
+    del /q temp_captcha.png
+    echo [OK] temp_captcha.png
+    set /a DELETED+=1
+) else (
+    echo [--] temp_captcha.png
+)
+dir /b captcha*.png 2>nul >nul
+if not errorlevel 1 (
+    for %%f in (captcha*.png) do (
+        del /q "%%f" 2>nul
+        echo [OK] %%f
+        set /a DELETED+=1
+    )
+)
+if exist test_captcha.jpg (
+    del /q test_captcha.jpg
+    echo [OK] test_captcha.jpg
+    set /a DELETED+=1
+) else (
+    echo [--] test_captcha.jpg
+)
+if exist results (
+    rmdir /s /q results
+    echo [OK] results\
+    set /a DELETED+=1
+) else (
+    echo [--] results\
+)
+if exist config.json (
+    del /q config.json
+    echo [OK] config.json
+    set /a DELETED+=1
+) else (
+    echo [--] config.json
+)
 
 REM ---- setup.bat 安装的依赖 ----
 if exist node_modules (
     rmdir /s /q node_modules
-    echo [OK] node_modules\ （已删除，下次运行 setup.bat 会重新安装）
+    echo [OK] node_modules\ （已删除，下次运行 setup.bat 会重新部署）
     set /a DELETED+=1
 ) else (
     echo [--] node_modules\
@@ -44,8 +99,6 @@ echo.
 echo     Playwright Chromium 可能影响其他项目，未自动删除。
 echo     如需清理: %USERPROFILE%\AppData\Local\ms-playwright
 echo.
-if !DELETED! GTR 0 (
-    echo   下次使用前请运行 setup.bat 重新安装依赖
-)
+echo   下次使用前请运行 setup.bat 重新部署
 echo.
 pause

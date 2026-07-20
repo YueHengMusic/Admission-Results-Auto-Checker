@@ -15,8 +15,7 @@ if !errorlevel! neq 0 (
     pause
     exit /b 1
 )
-echo [OK] Node.js 已安装
-node -v
+for /f "delims=" %%i in ('node -v 2^>nul') do echo [OK] Node.js %%i
 
 REM ---- 检测 Python ----
 set "PYTHON_CMD="
@@ -29,8 +28,7 @@ if "!PYTHON_CMD!"=="" (
     pause
     exit /b 1
 )
-echo [OK] Python 已安装 (!PYTHON_CMD!)
-!PYTHON_CMD! --version
+for /f "delims=" %%i in ('!PYTHON_CMD! --version 2^>^&1') do echo [OK] Python (!PYTHON_CMD!) %%i
 
 REM ---- 检测浏览器（注册表） ----
 set "BROWSER_OK="
@@ -44,11 +42,13 @@ if "!BROWSER_OK!"=="" where msedge >nul 2>&1 && set BROWSER_OK=Edge
 if not "!BROWSER_OK!"=="" (
     echo [OK] 浏览器: !BROWSER_OK!
 ) else (
-    echo [WARN] 未检测到 Chrome / Edge
+    echo [WARN] 未检测到系统浏览器
     echo [..] 正在安装 Playwright 内置 Chromium（约180MB，仅首次）...
+    echo [..] 使用 npmmirror 镜像加速下载
+    set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
     call npx playwright install chromium
     if !errorlevel! neq 0 (
-        echo [X] Chromium 安装失败，请手动执行: npx playwright install chromium
+        echo [X] Chromium 安装失败，请手动执行: set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ ^&^& npx playwright install chromium
     ) else (
         echo [OK] Chromium 安装完成
     )
@@ -100,6 +100,7 @@ echo ============================================
 echo   部署完成！
 echo ============================================
 echo.
+:menu
 echo   请选择：
 echo     [1] 开始自动查询（后台静默，定时轮询）
 echo     [2] 先测试一下（只查一次，确认信息正确）
@@ -128,6 +129,6 @@ if "%choice%"=="1" (
     echo 你可以随时运行: npm start
     pause >nul
 ) else (
-    echo 无效选择
-    pause >nul
+    echo 无效选择，请重新输入
+    goto menu
 )
