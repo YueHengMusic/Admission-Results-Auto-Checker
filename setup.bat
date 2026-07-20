@@ -87,8 +87,7 @@ if not "!BROWSER_OK!"=="" (
     echo [OK] 浏览器: !BROWSER_OK!
 ) else (
     echo [WARN] 未检测到系统浏览器
-    echo [..] 检查 Playwright 内置 Chromium...
-    echo [..] 使用 npmmirror 镜像加速下载
+    echo [..] 检查 Playwright 内置 Chromium（npmmirror 镜像源）...
     set PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
     call npx playwright install chromium
     if !errorlevel! neq 0 (

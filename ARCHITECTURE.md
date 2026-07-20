@@ -141,14 +141,16 @@ title: "江西省2026年普通高考成绩及录取查询结果"
 ```
 验证码图片
     │
-    ├── ddddocr (Python, ~1秒) → 命中 → 直接返回 ✅
+    ├── ddddocr (Python, ~1秒) → 4位命中 → 直接返回 ✅
     │
-    └── 未命中 → 懒加载 tesseract.js 并多策略识别（备选，仅首次失败时下载）
+    ├── ddddocr 返回 1~3 位 → 本次未采用，换验证码重试（不计失败）
+    │
+    └── ddddocr 被标记不可用 → 回退 tesseract.js（仅首次失败时下载）
         ├── 12x放大 + PSM 7/8/6 + 无白名单
         └── 去重排序 → 逐候选提交
 ```
 
-**调用方式：** Node.js 通过 `child_process.execSync` 调用 `py ocr_server.py <image>`，stdout 输出结果。连续 3 次失败则标记 ddddocr 不可用，后续自动回退 tesseract。浏览器重启或进程重启时重置标记，给 ddddocr 恢复机会。
+**调用方式：** Node.js 通过 `child_process.execSync` 调用 `py ocr_server.py <image>`，stdout 输出结果。只有连续 3 次空输出或 Python 异常才标记 ddddocr 不可用；返回 1~3 位仅视为临时未命中，不触发回退。浏览器重启时重置标记，给 ddddocr 恢复机会。
 
 ### 4.2 候选尝试与限流
 

@@ -238,7 +238,7 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 ### Q: OCR 准确率怎么样？怎么知道用的哪个引擎？
 
-使用 **ddddocr**（Python 库，专门为中国网站验证码训练），经实测准确率接近 100%。ddddocr 不可用时自动回退到 tesseract.js。运行时日志会标注引擎：
+使用 **ddddocr**（Python 库，专门为中国网站验证码训练），经实测准确率接近 100%。ddddocr 返回 1~3 位时自动换验证码重试，仅 Python 崩溃或空输出才回退 tesseract.js。运行时日志会标注引擎：
 ```
 → OCR(ddddocr): "Nhjv"(100%)        ← ddddocr 一把命中
 → ddddocr 未命中，尝试 tesseract...

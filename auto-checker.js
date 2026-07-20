@@ -536,7 +536,7 @@ async function ensureTesseract() {
   
   tesseractLoading = true;
   try {
-    log("  → ddddocr 不可用，正在加载 tesseract 备选引擎（首次需下载语言包，约15MB）...");
+    log("  → 正在加载 tesseract 备选引擎（首次需下载语言包，约15MB）...");
     const { createWorker } = require("tesseract.js");
     ocrWorker = await createWorker("eng", 1, {
       logger: m => {
@@ -563,29 +563,37 @@ async function ensureTesseract() {
 function ocrViaDdddocr(imagePath) {
   if (ddddocrAvailable === false) return null;
   
-  // 重试逻辑：Python异常 OR 非4位字母数字结果各重试最多3次；
-  // 3次均失败则标记 ddddocr 不可用，后续回退 tesseract
+  // 重试逻辑：异常 + 格式错误各重试最多3次；
+  // 3次真正失败才标记不可用（3位结果不算失败，仅本次不采用）
+  let lastErr = "";
+  let realFailures = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const { execSync } = require("child_process");
-      const result = execSync(`${PYTHON_CMD} "${path.join(__dirname, "ocr_server.py")}" "${imagePath}"`, {
-      timeout: 10000,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    
-    if (result && result.length === 4 && /^[a-zA-Z0-9]+$/.test(result)) {
-      ddddocrAvailable = true;
-      return result;
-    }
-    // 格式不对（非4位字母数字），继续重试
+      const raw = execSync(`${PYTHON_CMD} "${path.join(__dirname, "ocr_server.py")}" "${imagePath}"`, {
+        timeout: 10000,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const result = raw.trim();
+      
+      if (result && result.length === 4 && /^[a-zA-Z0-9]+$/.test(result)) {
+        if (ddddocrAvailable === null) ddddocrAvailable = true;
+        return result;
+      }
+      // 非4位（1~3位）：ddddocr 没坏只是没读全，不计失败
+      if (!result) {
+        realFailures++;
+        lastErr = `格式异常(len=${result.length}): "${result.substring(0, 20)}"`;
+      }
     } catch (e) {
-      // Python 异常，继续重试（最后一次时才标记不可用）
+      realFailures++;
+      lastErr = e.stderr ? e.stderr.toString().trim().split("\n")[0] : e.message;
     }
   }
-  // 3次全部失败，标记 ddddocr 不可用
-  if (ddddocrAvailable === null) {
-    log("  ⚠ ddddocr 不可用，回退到 tesseract.js");
+  // 只有真正失败才标记不可用
+  if (realFailures >= 3) {
+    log(`  ⚠ ddddocr 连续3次失败: ${lastErr}`);
     ddddocrAvailable = false;
   }
   return null;
@@ -598,7 +606,6 @@ function ocrViaDdddocr(imagePath) {
  */
 async function recognizeCaptchaMulti(imagePath) {
   const sharp = require("sharp");
-  const worker = ocrWorker;
   const originalBuf = fs.readFileSync(imagePath);
   let W = 64, H = 30;  // 已知验证码尺寸作为默认值
   try {
@@ -632,37 +639,34 @@ async function recognizeCaptchaMulti(imagePath) {
     return candidates;
   }
   
-  // ddddocr 未命中，回退 tesseract 多策略
-  if (!ocrWorker && !tesseractFailed) {
-    const loaded = await ensureTesseract();
-    if (!loaded) {
-      // tesseract 不可用，返回 ddddocr 结果（如果有）
+  // ddddocr 本次未命中
+  if (ddddocrAvailable === false) {
+    // ddddocr 已被标记不可用，回退 tesseract
+    if (!ocrWorker && !tesseractFailed) {
+      const loaded = await ensureTesseract();
+      if (!loaded) {
+        if (ddddResult) add(ddddResult, 80, "ddddocr");
+        candidates.sort((a, b) => b.confidence - a.confidence);
+        return candidates;
+      }
+    }
+    if (!ocrWorker) {
       if (ddddResult) add(ddddResult, 80, "ddddocr");
       candidates.sort((a, b) => b.confidence - a.confidence);
       return candidates;
     }
-  }
-  if (!ocrWorker) {
-    // tesseract 未初始化，只能返回 ddddocr 的结果（如果有）或空
-    if (ddddResult) add(ddddResult, 80, "ddddocr");
-    candidates.sort((a, b) => b.confidence - a.confidence);
-    return candidates;
-  }
-  if (ddddocrAvailable !== false) {
-    // ddddocr 已加载但本次没识别出来（非首次不可用的情况）
-    log("  → ddddocr 未命中，尝试 tesseract...");
-  }
-  const buf12 = await sharp(originalBuf).resize(W * 12, H * 12, { kernel: "nearest" }).png().toBuffer();
+    log("  → ddddocr 不可用，尝试 tesseract...");
+    const buf12 = await sharp(originalBuf).resize(W * 12, H * 12, { kernel: "nearest" }).png().toBuffer();
   
   for (const psm of ["7", "8", "6"]) {
-    await worker.setParameters({ tessedit_char_whitelist: ALPHANUM, tessedit_pageseg_mode: psm });
-    const { data } = await worker.recognize(buf12);
+    await ocrWorker.setParameters({ tessedit_char_whitelist: ALPHANUM, tessedit_pageseg_mode: psm });
+    const { data } = await ocrWorker.recognize(buf12);
     add(data.text.replace(/[^a-zA-Z0-9]/g, ""), data.confidence, "tesseract");
   }
   
   // 无白名单兜底（可能抓到被过滤的字符）
-  await worker.setParameters({ tessedit_char_whitelist: "", tessedit_pageseg_mode: "7" });
-  const { data: d2 } = await worker.recognize(buf12);
+  await ocrWorker.setParameters({ tessedit_char_whitelist: "", tessedit_pageseg_mode: "7" });
+  const { data: d2 } = await ocrWorker.recognize(buf12);
   add(d2.text.replace(/[^a-zA-Z0-9]/g, ""), d2.confidence, "tesseract");
   
   candidates.sort((a, b) => {
@@ -670,6 +674,7 @@ async function recognizeCaptchaMulti(imagePath) {
     const score = (c) => (c.code.length === 4 ? 100 : 0) + c.confidence;
     return score(b) - score(a);
   });
+  }
   
   return candidates;
 }

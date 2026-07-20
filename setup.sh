@@ -95,8 +95,7 @@ else
         echo "[..] 检查 Chromium 系统依赖（可能需要 sudo 权限）..."
         npx playwright install-deps chromium 2>&1 | tail -1 && echo "[OK] 系统依赖已就绪" || echo "[WARN] 系统依赖安装失败，可手动执行: npx playwright install-deps chromium"
     fi
-    echo "[..] 检查 Playwright 内置 Chromium..."
-    echo "[..] 使用 npmmirror 镜像加速下载"
+    echo "[..] 检查 Playwright 内置 Chromium（npmmirror 镜像源）..."
     npx playwright install chromium && echo "[OK] Chromium 已就绪" || echo "[X] Chromium 安装失败，请手动: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ npx playwright install chromium"
 fi
 
