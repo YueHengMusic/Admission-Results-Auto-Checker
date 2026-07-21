@@ -962,6 +962,33 @@ async function main() {
   log(`  邮件通知: ${CONFIG.smtp.enabled ? "已启用 → " + CONFIG.smtp.to : "未启用"}`);
   log("=".repeat(55));
   
+  // 查询时间段：如果不在窗口内，先等待再启动浏览器
+  const WINDOW_ON = CONFIG.queryWindowEnabled === true;
+  const START_MIN = Math.round(CONFIG.queryStartHour * 60);
+  const END_MIN = Math.round(CONFIG.queryEndHour * 60);
+  
+  function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+  function fmtHM(m) { const h = Math.floor(m / 60), min = m % 60; return `${h}:${String(min).padStart(2, "0")}`; }
+  
+  function isInWindow(m) {
+    if (START_MIN < END_MIN) return m >= START_MIN && m < END_MIN;
+    return m >= START_MIN || m < END_MIN;  // 跨夜（如 22:00-6:00）
+  }
+  
+  if (WINDOW_ON) {
+    const nowM = nowMin();
+    if (!isInWindow(nowM)) {
+      const waitMin = nowM >= END_MIN && START_MIN < END_MIN
+        ? (1440 - nowM + START_MIN)
+        : (START_MIN - nowM + 1440) % 1440;
+      const waitMs = (waitMin || 1440) * 60 * 1000;
+      log(`  查询时间段 ${fmtHM(START_MIN)}-${fmtHM(END_MIN)}，等待约${Math.round(waitMs/3600000)}小时后开始...`);
+      await sleep(waitMs);
+    } else {
+      log(`  查询时间段 ${fmtHM(START_MIN)}-${fmtHM(END_MIN)}，当前在窗口内`);
+    }
+  }
+
   // 初始化邮件（如果启用）
   initMailer();
 
@@ -1022,33 +1049,6 @@ async function main() {
   }
   let ocrDdddocrHits = 0;          // OCR 统计：ddddocr 命中次数
   let ocrTotalCalls = 0;           // OCR 统计：总调用次数
-  
-  // 查询时间段：仅 queryWindowEnabled=true 时生效
-  const WINDOW_ON = CONFIG.queryWindowEnabled === true;
-  const START_MIN = Math.round(CONFIG.queryStartHour * 60);
-  const END_MIN = Math.round(CONFIG.queryEndHour * 60);
-  
-  function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
-  function fmtHM(m) { const h = Math.floor(m / 60), min = m % 60; return `${h}:${String(min).padStart(2, "0")}`; }
-  
-  function isInWindow(m) {
-    if (START_MIN < END_MIN) return m >= START_MIN && m < END_MIN;
-    return m >= START_MIN || m < END_MIN;  // 跨夜（如 22:00-6:00）
-  }
-  
-  if (WINDOW_ON) {
-    const nowM = nowMin();
-    if (!isInWindow(nowM)) {
-      const waitMin = nowM >= END_MIN && START_MIN < END_MIN
-        ? (1440 - nowM + START_MIN)
-        : (START_MIN - nowM + 1440) % 1440;
-      const waitMs = (waitMin || 1440) * 60 * 1000;
-      log(`  查询时间段 ${fmtHM(START_MIN)}-${fmtHM(END_MIN)}，等待约${Math.round(waitMs/3600000)}小时后开始...`);
-      await sleep(waitMs);
-    } else {
-      log(`  查询时间段 ${fmtHM(START_MIN)}-${fmtHM(END_MIN)}，当前在窗口内`);
-    }
-  }
   
   // 危险状态（退档相关、自由可投等）——匹配子串
   const DANGER_KEYWORDS = ["退档", "自由可投", "未录取", "不予录取"];
@@ -1115,6 +1115,7 @@ async function main() {
         
         try {
           const result = await executeQuery(context);
+          ocrTotalCalls++;  // 每次OCR调用都计数（含失败的）
           
           if (result.captchaError) {
             continue; // 重试
@@ -1129,7 +1130,6 @@ async function main() {
           querySuccess = true;
           finalResult = result;
           // OCR 统计
-          ocrTotalCalls++;
           if (result.engine === "ddddocr") ocrDdddocrHits++;
           break;
         } catch (err) {
@@ -1312,12 +1312,39 @@ async function main() {
         const nowM = nowMin();
         if (!isInWindow(nowM)) {
           if (START_MIN < END_MIN && nowM >= END_MIN) {
-            log(`├─ 已过查询结束时间 ${fmtHM(END_MIN)}，今天到此为止`);
-            // 显示下一个窗口开始时间
+            log(`├─ 已过查询结束时间 ${fmtHM(END_MIN)}，窗口结束`);
+            // 善后：最终统计 + 释放内存 + 保存状态
+            const hitRate = ocrTotalCalls > 0 ? Math.round(ocrDdddocrHits / ocrTotalCalls * 100) : 0;
+            const memMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+            log(`├─ OCR命中率: ${ocrDdddocrHits}/${ocrTotalCalls} (${hitRate}%) | 内存: ${memMB}MB`);
+            log(`├─ 🔄 关闭浏览器，等待下一个查询窗口...`);
+            if (ocrWorker) { try { await ocrWorker.terminate(); ocrWorker = null; } catch (e) { /* */ } }
+            await context.close().catch(() => {});
+            await browser.close().catch(() => {});
+            // 重置所有运行状态，下个窗口从零开始
+            ocrDdddocrHits = 0;
+            ocrTotalCalls = 0;
+            queriesSinceRestart = 0;
+            lastRestartTime = Date.now();
+            consecutiveFailures = 0;
+            ddddocrAvailable = null;  // 重新检测，给恢复机会
             const nextStartMin = (START_MIN - nowMin() + 1440) % 1440;
             const nextStartH = Math.round(nextStartMin / 60 * 10) / 10;
             log(`└─ 下个查询窗口: 约${nextStartH}小时后 (${fmtHM(START_MIN)})`);
-            break;
+            await sleep((nextStartMin || 1440) * 60 * 1000);
+            // 重新启动浏览器
+            log("  正在启动浏览器...");
+            browser = await chromium.launch(launchOptions);
+            context = await browser.newContext({
+              userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              viewport: { width: 1280, height: 800 },
+            });
+            const cookies = loadCookies();
+            if (cookies) await context.addCookies(cookies);
+            log("  浏览器就绪");
+            queriesSinceRestart = 0;
+            lastRestartTime = Date.now();
+            continue;
           }
           // 还没到开始时间，等到开始时间
           const waitMin = (START_MIN - nowM + 1440) % 1440;
