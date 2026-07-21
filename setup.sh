@@ -74,30 +74,16 @@ else
     echo "[X] ddddocr 安装失败，请手动执行: pip install ddddocr"
 fi
 
-# ---- 检测浏览器（npm install 之后，playwright 已可用） ----
-BROWSER=""
-if [ "$(uname)" = "Darwin" ]; then
-    [ -d "/Applications/Google Chrome.app" ] && BROWSER="Chrome"
-    [ -z "$BROWSER" ] && [ -d "/Applications/Microsoft Edge.app" ] && BROWSER="Edge"
-else
-    command -v google-chrome >/dev/null 2>&1 && BROWSER="Chrome"
-    [ -z "$BROWSER" ] && command -v google-chrome-stable >/dev/null 2>&1 && BROWSER="Chrome"
-    [ -z "$BROWSER" ] && command -v microsoft-edge >/dev/null 2>&1 && BROWSER="Edge"
-fi
+echo
 
-if [ -n "$BROWSER" ]; then
-    echo "[OK] 浏览器: $BROWSER"
-else
-    echo "[WARN] 未检测到系统浏览器"
-    export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
-    # Linux 需要系统依赖库（libnspr4, libnss3 等）
-    if [ "$(uname)" = "Linux" ]; then
-        echo "[..] 检查 Chromium 系统依赖（可能需要 sudo 权限）..."
-        npx playwright install-deps chromium 2>&1 | tail -1 && echo "[OK] 系统依赖已就绪" || echo "[WARN] 系统依赖安装失败，可手动执行: npx playwright install-deps chromium"
-    fi
-    echo "[..] 检查 Playwright 内置 Chromium（npmmirror 镜像源）..."
-    npx playwright install chromium && echo "[OK] Chromium 已就绪" || echo "[X] Chromium 安装失败，请手动执行: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ npx playwright install chromium"
+# macOS/Linux 直接安装 Playwright 内置 Chromium
+export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/
+if [ "$(uname)" = "Linux" ]; then
+    echo "[..] 检查 Chromium 系统依赖（可能需要 sudo 权限）..."
+    npx playwright install-deps chromium 2>&1 | tail -1 && echo "[OK] 系统依赖已就绪" || echo "[WARN] 系统依赖安装失败，可手动执行: npx playwright install-deps chromium"
 fi
+echo "[..] 检查 Playwright 内置 Chromium（npmmirror 镜像源）..."
+npx playwright install chromium && echo "[OK] Chromium 已就绪" || echo "[X] Chromium 安装失败，请手动执行: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ npx playwright install chromium"
 
 echo
 echo "============================================"

@@ -24,6 +24,8 @@
   "candidateDelayMs": 3000,
   "_captchaRefetchDelayMs": "刷新验证码间延迟（毫秒）",
   "captchaRefetchDelayMs": 5000,
+  "_ddddocrMaxConsecutiveFails": "连续多少次查询级失败后禁用 ddddocr，0=永不禁用",
+  "ddddocrMaxConsecutiveFails": 3,
 
   "___________________浏览器___________________": "",
   "_headless": "是否隐藏浏览器窗口，true = 后台运行, false = 可见（调试用）",
@@ -36,6 +38,8 @@
   "___________________告警___________________": "",
   "_failureAlertThreshold": "连续 N 次查询失败发送告警邮件（0 = 不告警）",
   "failureAlertThreshold": 6,
+  "_ddddocrAlertEnabled": "ddddocr 连续失败时是否发告警邮件",
+  "ddddocrAlertEnabled": true,
 
   "___________________邮件通知___________________": "",
   "smtp": {

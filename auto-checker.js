@@ -54,6 +54,8 @@ function loadConfig() {
     browserRestartQueries: 50,       // 每N次查询重启浏览器释放内存
     browserRestartHours: 6,          // 或每N小时重启浏览器
     failureAlertThreshold: 6,        // 连续N次失败发送告警邮件
+    ddddocrAlertEnabled: true,       // ddddocr 连续失败时是否发送告警
+    ddddocrMaxConsecutiveFails: 3,  // 连续N次查询级失败后禁用 ddddocr
     queryWindowEnabled: false,       // 是否启用查询时间段限制
     queryStartHour: "8:00",          // 查询开始时间（如 "8:00" 或 8.5）
     queryEndHour: "17:00",           // 查询结束时间（如 "17:30" 或 17.5）
@@ -111,6 +113,8 @@ CONFIG.headless = CONFIG.headless !== false;  // 只有明确设为 false 才显
 CONFIG.browserRestartQueries = isNaN(Number(CONFIG.browserRestartQueries)) ? 50 : Number(CONFIG.browserRestartQueries);
 CONFIG.browserRestartHours = isNaN(Number(CONFIG.browserRestartHours)) ? 6 : Number(CONFIG.browserRestartHours);
 CONFIG.failureAlertThreshold = isNaN(Number(CONFIG.failureAlertThreshold)) ? 6 : Number(CONFIG.failureAlertThreshold);
+CONFIG.ddddocrMaxConsecutiveFails = isNaN(Number(CONFIG.ddddocrMaxConsecutiveFails)) ? 3 : Number(CONFIG.ddddocrMaxConsecutiveFails);
+CONFIG.ddddocrAlertEnabled = CONFIG.ddddocrAlertEnabled !== false;
 CONFIG.queryWindowEnabled = CONFIG.queryWindowEnabled === true || CONFIG.queryWindowEnabled === "true";
 // 查询时间解析：支持数字（8/8.5）和字符串（"8:30"）
 function parseTime(v) {
@@ -551,7 +555,7 @@ const PYTHON_CMD = (() => {
 let ocrWorker = null;
 let tesseractLoading = false;   // 防止并发初始化
 let tesseractFailed = false;    // 初始化失败后不再重试
-let ddddocrAvailable = null;  // null=未检测, true=可用, false=不可用
+let ddddocrDead = false;        // 连续3次查询级失败后判死刑，浏览器重启/窗口结束重置
 
 /**
  * 懒加载 tesseract.js（仅在 ddddocr 回退时首次调用，避免启动时下载15MB语言包）
@@ -596,12 +600,8 @@ async function ensureTesseract() {
  * 调用 ddddocr（Python）识别验证码，返回结果或 null
  */
 function ocrViaDdddocr(imagePath) {
-  if (ddddocrAvailable === false) return null;
-  
-  // 重试逻辑：异常 + 格式错误各重试最多3次；
-  // 3次真正失败才标记不可用（3位结果不算失败，仅本次不采用）
+  // 每次查询都尝试 ddddocr（即使之前失败过），给自己恢复的机会
   let lastErr = "";
-  let realFailures = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const { execSync } = require("child_process");
@@ -613,23 +613,17 @@ function ocrViaDdddocr(imagePath) {
       const result = raw.trim();
       
       if (result && result.length === 4 && /^[a-zA-Z0-9]+$/.test(result)) {
-        if (ddddocrAvailable === null) ddddocrAvailable = true;
         return result;
       }
-      // 非4位（1~3位）：ddddocr 没坏只是没读全，不计失败
-      if (!result) {
-        realFailures++;
-        lastErr = `格式异常(len=${result.length}): "${result.substring(0, 20)}"`;
-      }
+      // 非4位（1~3位）：ddddocr 没坏只是没读全
+      if (!result) lastErr = `空输出`;
     } catch (e) {
-      realFailures++;
       lastErr = e.stderr ? e.stderr.toString().trim().split("\n")[0] : e.message;
     }
   }
-  // 只有真正失败才标记不可用
-  if (realFailures >= 3) {
-    log(`  ⚠ ddddocr 连续3次失败: ${lastErr}`);
-    ddddocrAvailable = false;
+  // 本次查询内 3 次尝试都失败，返回 null
+  if (lastErr) {
+    // 只记录，不在此处判死刑（由主循环根据连续查询失败次数判断）
   }
   return null;
 }
@@ -668,14 +662,18 @@ async function recognizeCaptchaMulti(imagePath) {
   // 首选: ddddocr（专门针对此类验证码训练）
   const ddddResult = await ocrViaDdddocr(imagePath);
   if (ddddResult && ddddResult.length === 4) {
-    // ddddocr 命中，直接返回，不再跑 tesseract
+    // ddddocr 命中，直接返回
     add(ddddResult, 100, "ddddocr");
     candidates.sort((a, b) => b.confidence - a.confidence);
+    // ddddocr 恢复了 → 释放 tesseract 内存
+    if (ocrWorker) {
+      try { await ocrWorker.terminate(); ocrWorker = null; } catch (e) { /* */ }
+    }
     return candidates;
   }
   
   // ddddocr 本次未命中
-  if (ddddocrAvailable === false) {
+  if (ddddocrDead) {
     // ddddocr 已被标记不可用，回退 tesseract
     if (!ocrWorker && !tesseractFailed) {
       const loaded = await ensureTesseract();
@@ -957,7 +955,6 @@ async function main() {
   log("=".repeat(55));
   log(`  准考证号: ${CONFIG.examNumber}`);
   log(`  证件后4位: ${CONFIG.idLast4}`);
-  log(`  浏览器: ${CONFIG.headless ? "后台静默" : "可见窗口"}`);
   log(`  查询间隔: ${CONFIG.checkIntervalMinutes === 0 ? "仅一次" : CONFIG.checkIntervalMinutes + " 分钟"}`);
   log(`  邮件通知: ${CONFIG.smtp.enabled ? "已启用 → " + CONFIG.smtp.to : "未启用"}`);
   log("=".repeat(55));
@@ -1014,11 +1011,11 @@ async function main() {
 
   // 检测可用浏览器（仅 Windows 尝试系统浏览器，其他平台直接用内置 Chromium）
   if (process.platform === "win32") {
-    try { execSync('reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe"', { stdio: "ignore" }); launchOptions.channel = "chrome"; log("  浏览器: Google Chrome"); } catch {
-    try { execSync('reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe"', { stdio: "ignore" }); launchOptions.channel = "msedge"; log("  浏览器: Microsoft Edge"); } catch {
-    log("  浏览器: Playwright 内置 Chromium"); }}
+    try { execSync('reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe"', { stdio: "ignore" }); launchOptions.channel = "chrome"; log(`  浏览器: Google Chrome (${CONFIG.headless ? "后台静默" : "可见窗口"})`); } catch {
+    try { execSync('reg query "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe"', { stdio: "ignore" }); launchOptions.channel = "msedge"; log(`  浏览器: Microsoft Edge (${CONFIG.headless ? "后台静默" : "可见窗口"})`); } catch {
+    log(`  浏览器: Playwright 内置 Chromium (${CONFIG.headless ? "后台静默" : "可见窗口"})`); }}
   } else {
-    log("  浏览器: Playwright 内置 Chromium");
+    log(`  浏览器: Playwright 内置 Chromium (${CONFIG.headless ? "后台静默" : "可见窗口"})`);
   }
   
   let browser = await chromium.launch(launchOptions);
@@ -1029,6 +1026,15 @@ async function main() {
   });
   log("  浏览器就绪");
   
+  // 初始化邮件 + OCR
+  initMailer();
+  try {
+    execSync(`${PYTHON_CMD} -c "import ddddocr"`, { stdio: "ignore" });
+    log("  OCR: ddddocr 已就绪（tesseract 按需加载）");
+  } catch (e) {
+    log("  OCR: ddddocr 不可用，将使用 tesseract");
+  }
+
   // 恢复之前的会话cookie
   const savedCookies = loadCookies();
   if (savedCookies) {
@@ -1043,11 +1049,13 @@ async function main() {
   let lastRestartTime = Date.now();
   let consecutiveFailures = 0;
   const FAILURE_ALERT_THRESHOLD = CONFIG.failureAlertThreshold;
+  let consecutiveDdddocrFails = 0;    // 连续查询级 ddddocr 失败次数
   let lastAdmissionStatus = loadAdmissionState();  // 从文件恢复，避免重启后重复通知
   if (lastAdmissionStatus) {
     log(`  已恢复上次状态: ${lastAdmissionStatus}`);
   }
   let ocrDdddocrHits = 0;          // OCR 统计：ddddocr 命中次数
+  let ocrTesseractHits = 0;        // OCR 统计：tesseract 命中次数
   let ocrTotalCalls = 0;           // OCR 统计：总调用次数
   
   // 危险状态（退档相关、自由可投等）——匹配子串
@@ -1069,9 +1077,9 @@ async function main() {
   async function restartBrowser() {
     log("├─ 🔄 重启浏览器释放内存...");
     // 重置 ddddocr 可用性检测，给它一次恢复机会（可能只是临时故障）
-    if (ddddocrAvailable === false) {
-      ddddocrAvailable = null;
-      log("├─ 🔄 重新检测 ddddocr...");
+    if (ddddocrDead) {
+      ddddocrDead = false;
+      log("├─ 🔄 重新启用 ddddocr...");
     }
     // 保存当前 cookie 再关闭旧浏览器
     try { saveCookies(await context.cookies()); } catch (e) { /* */ }
@@ -1129,8 +1137,14 @@ async function main() {
           
           querySuccess = true;
           finalResult = result;
-          // OCR 统计
-          if (result.engine === "ddddocr") ocrDdddocrHits++;
+          // OCR 统计 + ddddocr 连续失败追踪
+          if (result.engine === "ddddocr") {
+            ocrDdddocrHits++;
+            if (consecutiveDdddocrFails > 0) consecutiveDdddocrFails = 0;
+          } else {
+            ocrTesseractHits++;
+            if (!ddddocrDead) consecutiveDdddocrFails++;
+          }
           break;
         } catch (err) {
           log(`├─ 错误: ${err.message}`);
@@ -1148,6 +1162,8 @@ async function main() {
       if (!querySuccess || !finalResult) {
         log("├─ 所有尝试均失败");
         consecutiveFailures++;
+        // 如果 ddddocr 活着但整轮都没命中，也计一次失败
+        if (!ddddocrDead) consecutiveDdddocrFails++;
         // 连续多次失败：发送告警通知
         if (consecutiveFailures === FAILURE_ALERT_THRESHOLD && CONFIG.smtp.enabled) {
           log("├─ ⚠️ 连续6次查询失败，发送告警邮件...");
@@ -1280,15 +1296,34 @@ async function main() {
         await sendTestEmail(finalResult);
       }
       
+      // ddddocr 连续失败 → 判死刑 + 告警
+      const DDDDOCR_THRESHOLD = CONFIG.ddddocrMaxConsecutiveFails;
+      if (consecutiveDdddocrFails >= DDDDOCR_THRESHOLD && !ddddocrDead) {
+        ddddocrDead = true;
+        log("├─ ⚠ ddddocr 连续3次查询均失败，已禁用");
+        if (CONFIG.smtp.enabled && CONFIG.ddddocrAlertEnabled !== false) {
+          try {
+            await mailTransporter.sendMail({
+              from: CONFIG.smtp.from,
+              to: CONFIG.smtp.to,
+              subject: "⚠️ ddddocr 已禁用 — 录取查询工具",
+              html: `<p>ddddocr 连续 ${DDDDOCR_THRESHOLD} 次查询均无法正常识别验证码，已自动回退到 tesseract 备选引擎。</p><p>浏览器重启或查询窗口切换后会重新尝试 ddddocr。</p><p style="color:#999">${timestamp()}</p>`,
+            });
+            log("├─ ddddocr 告警邮件已发送");
+          } catch (e) { /* */ }
+        }
+      }
+      
       // 查询耗时
       const elapsed = ((Date.now() - queryStartMs) / 1000).toFixed(1);
       log(`├─ 耗时: ${elapsed}s`);
       
       // 定期统计：每10次输出 OCR 命中率 + 内存
       if (attemptNumber % 10 === 0) {
-        const hitRate = ocrTotalCalls > 0 ? Math.round(ocrDdddocrHits / ocrTotalCalls * 100) : 0;
+        const ocrHits = ocrDdddocrHits + ocrTesseractHits;
+        const hitRate = ocrTotalCalls > 0 ? Math.round(ocrHits / ocrTotalCalls * 100) : 0;
         const memMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
-        log(`├─ OCR命中率: ${ocrDdddocrHits}/${ocrTotalCalls} (${hitRate}%) | 内存: ${memMB}MB`);
+        log(`├─ OCR命中率: ${ocrHits}/${ocrTotalCalls} (${hitRate}%) | 内存: ${memMB}MB`);
       }
       
       // 长期运行：每50次或6小时自动重启浏览器释放内存
@@ -1321,13 +1356,11 @@ async function main() {
             if (ocrWorker) { try { await ocrWorker.terminate(); ocrWorker = null; } catch (e) { /* */ } }
             await context.close().catch(() => {});
             await browser.close().catch(() => {});
-            // 重置所有运行状态，下个窗口从零开始
-            ocrDdddocrHits = 0;
-            ocrTotalCalls = 0;
+            // 重置浏览器相关状态，下个窗口从零开始
             queriesSinceRestart = 0;
             lastRestartTime = Date.now();
-            consecutiveFailures = 0;
-            ddddocrAvailable = null;  // 重新检测，给恢复机会
+            ddddocrDead = false;  // 重新启用，给恢复机会
+            consecutiveDdddocrFails = 0;
             const nextStartMin = (START_MIN - nowMin() + 1440) % 1440;
             const nextStartH = Math.round(nextStartMin / 60 * 10) / 10;
             log(`└─ 下个查询窗口: 约${nextStartH}小时后 (${fmtHM(START_MIN)})`);

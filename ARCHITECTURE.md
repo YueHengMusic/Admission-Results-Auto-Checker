@@ -145,12 +145,12 @@ title: "江西省2026年普通高考成绩及录取查询结果"
     │
     ├── ddddocr 返回 1~3 位 → 本次未采用，换验证码重试（不计失败）
     │
-    └── ddddocr 被标记不可用 → 回退 tesseract.js（仅首次失败时下载）
+    └── ddddocr 连续失败被标记不可用 → 回退 tesseract.js（仅首次失败时下载）
         ├── 12x放大 + PSM 7/8/6 + 无白名单
         └── 去重排序 → 逐候选提交
 ```
 
-**调用方式：** Node.js 通过 `child_process.execSync` 调用 `py ocr_server.py <image>`，stdout 输出结果。只有连续 3 次空输出或 Python 异常才标记 ddddocr 不可用；返回 1~3 位仅视为临时未命中，不触发回退。浏览器重启时重置标记，给 ddddocr 恢复机会。
+**调用方式：** Node.js 通过 `child_process.execSync` 调用 `py ocr_server.py <image>`，stdout 输出结果。每次查询都尝试 ddddocr，只有连续查询级失败（提交的验证码都不是 ddddocr 出的）达到阈值才标记不可用、回退 tesseract。ddddocr 命中一次即可重置失败计数并释放 tesseract 内存。浏览器重启或查询窗口切换时重新启用 ddddocr。
 
 ### 4.2 候选尝试与限流
 
@@ -276,7 +276,7 @@ auto-checker.js
 
 ### 6.7 长期运行保障
 
-- **浏览器内存释放**：每 N 次查询或 N 小时后自动重启浏览器（`browserRestartQueries` / `browserRestartHours` 可配）。重启时同步重置 ddddocr 可用性标记，给 OCR 引擎恢复机会
+- **浏览器内存释放**：每 N 次查询或 N 小时后自动重启浏览器（`browserRestartQueries` / `browserRestartHours` 可配）。重启时同步重置 ddddocr 禁用标记，给 OCR 引擎恢复机会
 - **失败告警**：连续 N 次查询全部失败时自动发送告警邮件（`failureAlertThreshold` 可配）；单次成功即使"暂无录取"也重置计数，避免误告警
 - **邮件重试**：录取通知邮件失败后共尝试 3 次（间隔 30 秒），测试邮件共尝试 2 次
 - **页面解析泛化**：CSS class 匹配 + 关键词兜底 + "暂无录取"10 种变体覆盖，网站改版不漏报
@@ -296,7 +296,7 @@ auto-checker.js
 
 ### 6.9 查询时间段
 
-通过 `queryWindowEnabled` 开关和 `queryStartHour`/`queryEndHour` 配置，限制程序只在指定时间段内运行。支持正常区间（8:00 至 17:30）和跨夜区间（22:00 至 6:00），时间格式支持 `"8:30"` 字符串、`8.5` 小数、`8` 整数。到点后关闭浏览器和 tesseract worker 等待，下个窗口自动重启继续，不截断正在进行的查询。
+通过 `queryWindowEnabled` 开关和 `queryStartHour`/`queryEndHour` 配置，限制程序只在指定时间段内运行。支持正常区间（8:00 至 17:30）和跨夜区间（22:00 至 6:00），时间格式支持 `"8:30"` 字符串、`8.5` 小数、`8` 整数。到点后关闭浏览器和 tesseract worker 等待，下个窗口自动重启继续，不截断正在进行的查询。窗口切换时仅重置浏览器相关状态（重启计时、ddddocr 禁用标记），查询次数、OCR 统计、失败计数、录取状态跨窗口持续累积。
 
 ### 6.10 首次邮件控制
 
@@ -304,7 +304,7 @@ auto-checker.js
 
 ### 6.11 运行监控
 
-启动时检测并输出 OCR 引擎可用性，每次查询输出耗时，每 10 次轮询输出 OCR 命中率（ddddocr 成功次数/总次数）和 Node.js 堆内存占用，长期运行时便于监控 OCR 是否退化、是否存在内存泄漏。
+启动时检测并输出 OCR 引擎可用性，每次查询输出耗时，每 10 次轮询输出 OCR 整体命中率（(ddddocr+tesseract 成功次数)/总调用次数）和 Node.js 堆内存占用，长期运行时便于监控 OCR 是否退化、是否存在内存泄漏。
 
 ---
 

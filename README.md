@@ -26,7 +26,7 @@ pip install ddddocr
 npm start
 ```
 
-> **前置条件**：需要系统已安装 Node.js 和 Python 3。Chrome 可选（程序会自动回退 Playwright 内置 Chromium）。
+> **前置条件**：需要系统已安装 Node.js 和 Python 3。浏览器无需手动安装（Windows 自动检测 Chrome/Edge，其他平台自动使用内置 Chromium）。
 > **Linux 用户**：`setup.sh` 会自动安装系统依赖和 pip（需要 sudo 权限）。
 > **邮件通知**：可选功能，不配置也能正常使用（弹窗 + 截图仍然有效）。
 
@@ -246,7 +246,7 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 
 ### Q: OCR 准确率怎么样？怎么知道用的哪个引擎？
 
-使用 **ddddocr**（Python 库，专门为中国网站验证码训练），经实测准确率接近 100%。ddddocr 返回 1~3 位时自动换验证码重试，仅 Python 崩溃或空输出才回退 tesseract.js。运行时日志会标注引擎：
+使用 **ddddocr**（Python 库，专门为中国网站验证码训练），经实测准确率接近 100%。每次查询都尝试 ddddocr，返回 1~3 位时自动换验证码重试。连续查询级失败达到阈值后才回退 tesseract.js，ddddocr 一旦命中即恢复正常。运行时日志会标注引擎：
 ```
 → OCR(ddddocr): "Nhjv"(100%)        ← ddddocr 一把命中
 → ddddocr 未命中，尝试 tesseract...
