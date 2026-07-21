@@ -15,6 +15,7 @@ DELETED=0
 [ -f auto-checker.log ]      && { rm -f auto-checker.log;      echo "[OK] auto-checker.log";      ((DELETED++)); } || echo "[--] auto-checker.log"
 [ -f session_cookies.json ]  && { rm -f session_cookies.json;  echo "[OK] session_cookies.json";  ((DELETED++)); } || echo "[--] session_cookies.json"
 [ -f .email_tested ]         && { rm -f .email_tested;         echo "[OK] .email_tested";         ((DELETED++)); } || echo "[--] .email_tested"
+[ -f state.json ]            && { rm -f state.json;            echo "[OK] state.json";            ((DELETED++)); } || echo "[--] state.json"
 [ -f eng.traineddata ]       && { rm -f eng.traineddata;       echo "[OK] eng.traineddata";       ((DELETED++)); } || echo "[--] eng.traineddata"
 [ -f temp_captcha.png ]      && { rm -f temp_captcha.png;      echo "[OK] temp_captcha.png";      ((DELETED++)); } || echo "[--] temp_captcha.png"
 for f in captcha*.png test_captcha.jpg; do [ -f "$f" ] && { rm -f "$f"; echo "[OK] $f"; ((DELETED++)); }; done

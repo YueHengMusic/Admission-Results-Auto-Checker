@@ -54,6 +54,9 @@ function loadConfig() {
     browserRestartQueries: 50,       // 每N次查询重启浏览器释放内存
     browserRestartHours: 6,          // 或每N小时重启浏览器
     failureAlertThreshold: 6,        // 连续N次失败发送告警邮件
+    queryWindowEnabled: false,       // 是否启用查询时间段限制
+    queryStartHour: "8:00",          // 查询开始时间（如 "8:00" 或 8.5）
+    queryEndHour: "17:00",           // 查询结束时间（如 "17:30" 或 17.5）
     smtp: {
       enabled: false,
       host: "smtp.qq.com",
@@ -62,6 +65,7 @@ function loadConfig() {
       auth: { user: "", pass: "" },
       from: "",
       to: "",
+      firstTimeEmail: true,        // 首次查询（无论有无结果）是否发邮件
     },
   };
 
@@ -107,10 +111,25 @@ CONFIG.headless = CONFIG.headless !== false;  // 只有明确设为 false 才显
 CONFIG.browserRestartQueries = isNaN(Number(CONFIG.browserRestartQueries)) ? 50 : Number(CONFIG.browserRestartQueries);
 CONFIG.browserRestartHours = isNaN(Number(CONFIG.browserRestartHours)) ? 6 : Number(CONFIG.browserRestartHours);
 CONFIG.failureAlertThreshold = isNaN(Number(CONFIG.failureAlertThreshold)) ? 6 : Number(CONFIG.failureAlertThreshold);
+CONFIG.queryWindowEnabled = CONFIG.queryWindowEnabled === true || CONFIG.queryWindowEnabled === "true";
+// 查询时间解析：支持数字（8/8.5）和字符串（"8:30"）
+function parseTime(v) {
+  if (v == null) return 0;
+  if (typeof v === "string" && v.includes(":")) {
+    const [h, m] = v.split(":").map(Number);
+    return h + m / 60;
+  }
+  return Number(v);
+}
+CONFIG.queryStartHour = parseTime(CONFIG.queryStartHour);
+CONFIG.queryEndHour = parseTime(CONFIG.queryEndHour);
+CONFIG.queryStartHour = isNaN(CONFIG.queryStartHour) ? 8 : CONFIG.queryStartHour;
+CONFIG.queryEndHour = isNaN(CONFIG.queryEndHour) ? 17 : CONFIG.queryEndHour;
 if (CONFIG.smtp) {
   CONFIG.smtp.port = isNaN(Number(CONFIG.smtp.port)) ? 465 : Number(CONFIG.smtp.port);
   CONFIG.smtp.enabled = CONFIG.smtp.enabled === true || CONFIG.smtp.enabled === "true";
   CONFIG.smtp.secure = CONFIG.smtp.secure !== false;
+  CONFIG.smtp.firstTimeEmail = CONFIG.smtp.firstTimeEmail !== false;
 }
 
 // 解析命令行参数
@@ -130,6 +149,7 @@ const BASE_URL = "https://jxcf.jxeea.cn";
 const LOG_FILE = path.join(__dirname, "auto-checker.log");
 const RESULT_DIR = path.join(__dirname, "results");
 const COOKIE_FILE = path.join(__dirname, "session_cookies.json");
+const STATE_FILE = path.join(__dirname, "state.json");
 
 if (!fs.existsSync(RESULT_DIR)) fs.mkdirSync(RESULT_DIR, { recursive: true });
 
@@ -500,6 +520,21 @@ function loadCookies() {
   return null;
 }
 
+/** 保存录取状态到文件，重启后恢复 */
+function saveAdmissionState(status) {
+  try { fs.writeFileSync(STATE_FILE, JSON.stringify({ status, updated: new Date().toISOString() }), { mode: 0o600 }); } catch (e) { /* */ }
+}
+
+/** 从文件恢复上次的录取状态 */
+function loadAdmissionState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(STATE_FILE, "utf8")).status || null;
+    }
+  } catch (e) { /* */ }
+  return null;
+}
+
 // ===================== OCR（ddddocr主力 + tesseract备选） =====================
 
 const PYTHON_CMD = (() => {
@@ -794,6 +829,7 @@ async function executeQuery(context) {
     const html = await page.content();
     const result = parseResultPage(html);
     result.html = html;
+    result.engine = engine;
     
     // 始终截图并保存HTML内容（Buffer），是否落盘由调用方决定
     if (result.found) {
@@ -906,9 +942,12 @@ function parseResultPage(html) {
 // ===================== 主循环 =====================
 
 /**
- * 主函数：启动浏览器，进入轮询循环，ddddocr 自动识别验证码
+ * 主函数：启动浏览器，进入轮询循环
+ *   - 支持查询时间段（queryStartHour ~ queryEndHour），到点完成当次再停
  *   - ddddocr 不可用时自动懒加载 tesseract.js 备选
- *   - 首次查询成功后发送测试邮件（验证 SMTP + 查询 + 考生信息）
+ *   - 首次查询成功时发送测试邮件（可通过 smtp.firstTimeEmail 关闭）
+ *   - 首次查到数据时发送状态邮件（同上开关控制）
+ *   - 状态变化时发送邮件 + 桌面弹窗
  *   - 录取后桌面弹窗3次(间隔10分钟)，30分钟后自动退出
  */
 async function main() {
@@ -926,9 +965,17 @@ async function main() {
   // 初始化邮件（如果启用）
   initMailer();
 
+  // 检测 OCR 引擎
+  const { execSync } = require("child_process");
+  try {
+    execSync(`${PYTHON_CMD} -c "import ddddocr"`, { stdio: "ignore" });
+    log("  OCR: ddddocr 已就绪（tesseract 按需加载）");
+  } catch (e) {
+    log("  OCR: ddddocr 不可用，将使用 tesseract");
+  }
+
   // 启动浏览器：Chrome → Edge → 内置 Chromium 逐级回退
   log("  正在启动浏览器...");
-  const { execSync } = require("child_process");
   let launchOptions = {
     headless: CONFIG.headless,
     args: [
@@ -969,7 +1016,39 @@ async function main() {
   let lastRestartTime = Date.now();
   let consecutiveFailures = 0;
   const FAILURE_ALERT_THRESHOLD = CONFIG.failureAlertThreshold;
-  let lastAdmissionStatus = null;  // 追踪上一次的考生状态，用于检测变化
+  let lastAdmissionStatus = loadAdmissionState();  // 从文件恢复，避免重启后重复通知
+  if (lastAdmissionStatus) {
+    log(`  已恢复上次状态: ${lastAdmissionStatus}`);
+  }
+  let ocrDdddocrHits = 0;          // OCR 统计：ddddocr 命中次数
+  let ocrTotalCalls = 0;           // OCR 统计：总调用次数
+  
+  // 查询时间段：仅 queryWindowEnabled=true 时生效
+  const WINDOW_ON = CONFIG.queryWindowEnabled === true;
+  const START_MIN = Math.round(CONFIG.queryStartHour * 60);
+  const END_MIN = Math.round(CONFIG.queryEndHour * 60);
+  
+  function nowMin() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+  function fmtHM(m) { const h = Math.floor(m / 60), min = m % 60; return `${h}:${String(min).padStart(2, "0")}`; }
+  
+  function isInWindow(m) {
+    if (START_MIN < END_MIN) return m >= START_MIN && m < END_MIN;
+    return m >= START_MIN || m < END_MIN;  // 跨夜（如 22:00-6:00）
+  }
+  
+  if (WINDOW_ON) {
+    const nowM = nowMin();
+    if (!isInWindow(nowM)) {
+      const waitMin = nowM >= END_MIN && START_MIN < END_MIN
+        ? (1440 - nowM + START_MIN)
+        : (START_MIN - nowM + 1440) % 1440;
+      const waitMs = (waitMin || 1440) * 60 * 1000;
+      log(`  查询时间段 ${fmtHM(START_MIN)}-${fmtHM(END_MIN)}，等待约${Math.round(waitMs/3600000)}小时后开始...`);
+      await sleep(waitMs);
+    } else {
+      log(`  查询时间段 ${fmtHM(START_MIN)}-${fmtHM(END_MIN)}，当前在窗口内`);
+    }
+  }
   
   // 危险状态（退档相关、自由可投等）——匹配子串
   const DANGER_KEYWORDS = ["退档", "自由可投", "未录取", "不予录取"];
@@ -1026,6 +1105,7 @@ async function main() {
       
       let querySuccess = false;
       let finalResult = null;
+      const queryStartMs = Date.now();
       
       for (let retry = 0; retry < CONFIG.maxCaptchaRefetches; retry++) {
         if (retry > 0) {
@@ -1048,6 +1128,9 @@ async function main() {
           
           querySuccess = true;
           finalResult = result;
+          // OCR 统计
+          ocrTotalCalls++;
+          if (result.engine === "ddddocr") ocrDdddocrHits++;
           break;
         } catch (err) {
           log(`├─ 错误: ${err.message}`);
@@ -1105,14 +1188,15 @@ async function main() {
           fs.writeFileSync(screenshotPath, finalResult.screenshotBuf);
           fs.writeFileSync(htmlPath, finalResult.htmlContent);
           log(`├─ 截图: ${screenshotPath}`);
+          log(`├─ HTML: ${htmlPath}`);
         }
         
         // ---- 横幅 + 详情 + 通知 ----
         if (!lastAdmissionStatus) {
           // 首次出现数据
-          log("├─ ╔══════════════════════════════════════╗");
-          log(`├─ ║  ${finalResult.message}${" ".repeat(Math.max(0, 34 - finalResult.message.length))}║`);
-          log("├─ ╚══════════════════════════════════════╝");
+          log("├─ ══════════════════════════════════════");
+          log(`├─  ${finalResult.message}`);
+          log("├─ ══════════════════════════════════════");
           if (isFinal) {
             // 首次查到就是录取 → 直接走最终通知
             log("├─");
@@ -1123,10 +1207,12 @@ async function main() {
             for (let i = 1; i <= 3; i++) {
               sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
               await sleep(10 * 60 * 1000);
-              log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
+              log(`├─ 💬 第 ${i}/3 次弹窗提醒`);
             }
             log("└─ 提醒结束，程序退出");
             lastAdmissionStatus = currentStatus;
+            saveAdmissionState(currentStatus);
+            log("├─ 状态已保存");
             break;
           }
           log("├─");
@@ -1135,14 +1221,15 @@ async function main() {
             if (key !== "考生状态") log(`├─   ${key}: ${value}`);
           }
           sendDesktopNotification(isDanger ? "⚠️ 检测到危险状态" : "📋 检测到投档信息", `当前状态: ${currentStatus}`);
-          if (CONFIG.smtp.enabled) {
+          // 首次检测邮件（受 firstTimeEmail 控制）
+          if (CONFIG.smtp.enabled && CONFIG.smtp.firstTimeEmail !== false) {
             await sendStatusChangeEmail(null, currentStatus, finalResult.details, screenshotPath);
           }
         } else if (statusChanged) {
           // 状态发生变化
-          log("├─ ╔══════════════════════════════════════╗");
-          log(`├─ ║  🔄 ${finalResult.message}${" ".repeat(Math.max(0, 32 - finalResult.message.length))}║`);
-          log("├─ ╚══════════════════════════════════════╝");
+          log("├─ ══════════════════════════════════════");
+          log(`├─  🔄 ${finalResult.message}`);
+          log("├─ ══════════════════════════════════════");
           log(`├─ 上次状态: ${lastAdmissionStatus}`);
           for (const [key, value] of Object.entries(finalResult.details)) {
             if (key !== "考生状态") log(`├─   ${key}: ${value}`);
@@ -1157,10 +1244,12 @@ async function main() {
             for (let i = 1; i <= 3; i++) {
               sendDesktopNotification("🎉 高考录取结果已出！", `第 ${i}/3 次提醒 — 请查看 results/ 目录下的截图和邮件`);
               await sleep(10 * 60 * 1000);
-              log(`[${timestamp()}] 💬 第 ${i}/3 次弹窗提醒`);
+              log(`├─ 💬 第 ${i}/3 次弹窗提醒`);
             }
             log("└─ 提醒结束，程序退出");
             lastAdmissionStatus = currentStatus;
+            saveAdmissionState(currentStatus);
+            log("├─ 状态已保存");
             break;
           }
           sendDesktopNotification(isDanger ? "⚠️ 录取状态警告" : "🔄 录取状态更新", `${lastAdmissionStatus} → ${currentStatus}`);
@@ -1176,6 +1265,8 @@ async function main() {
         }
         
         lastAdmissionStatus = currentStatus;
+        saveAdmissionState(currentStatus);
+        log(`├─ 状态已保存`);
         log(`├─ 结果: ${finalResult.message}`);
         consecutiveFailures = 0;
       } else {
@@ -1183,11 +1274,21 @@ async function main() {
         consecutiveFailures = 0;
       }
       
-      // 首次查询成功后发送测试邮件（验证SMTP+查询功能+考生信息）
-      // 如果已经查到录取结果，录取通知邮件本身已有验证作用，跳过测试邮件
-      if (querySuccess && finalResult && !finalResult.found && attemptNumber === 1) {
+      // 首次查询成功后发送测试邮件（除非 smtp.firstTimeEmail=false）
+      if (querySuccess && finalResult && !finalResult.found && attemptNumber === 1 && CONFIG.smtp.firstTimeEmail !== false) {
         log("├─");
         await sendTestEmail(finalResult);
+      }
+      
+      // 查询耗时
+      const elapsed = ((Date.now() - queryStartMs) / 1000).toFixed(1);
+      log(`├─ 耗时: ${elapsed}s`);
+      
+      // 定期统计：每10次输出 OCR 命中率 + 内存
+      if (attemptNumber % 10 === 0) {
+        const hitRate = ocrTotalCalls > 0 ? Math.round(ocrDdddocrHits / ocrTotalCalls * 100) : 0;
+        const memMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+        log(`├─ OCR命中率: ${ocrDdddocrHits}/${ocrTotalCalls} (${hitRate}%) | 内存: ${memMB}MB`);
       }
       
       // 长期运行：每50次或6小时自动重启浏览器释放内存
@@ -1206,10 +1307,37 @@ async function main() {
         break;
       }
       
+      // 查询时间段：到点停止或等到开始时间（仅 WINDOW_ON 时生效）
+      if (WINDOW_ON) {
+        const nowM = nowMin();
+        if (!isInWindow(nowM)) {
+          if (START_MIN < END_MIN && nowM >= END_MIN) {
+            log(`├─ 已过查询结束时间 ${fmtHM(END_MIN)}，今天到此为止`);
+            // 显示下一个窗口开始时间
+            const nextStartMin = (START_MIN - nowMin() + 1440) % 1440;
+            const nextStartH = Math.round(nextStartMin / 60 * 10) / 10;
+            log(`└─ 下个查询窗口: 约${nextStartH}小时后 (${fmtHM(START_MIN)})`);
+            break;
+          }
+          // 还没到开始时间，等到开始时间
+          const waitMin = (START_MIN - nowM + 1440) % 1440;
+          const waitMs = (waitMin || 1440) * 60 * 1000;
+          log(`├─ 下次: ${fmtHM(START_MIN)} (约${Math.round(waitMs/3600000)}小时后)`);
+          log(`└─ 等待中... (Ctrl+C 退出)`);
+          await sleep(waitMs);
+          continue;
+        }
+      }
+      
       // 等待
       const waitMs = CONFIG.checkIntervalMinutes * 60 * 1000;
       const nextTime = new Date(Date.now() + waitMs).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
-      log(`├─ 下次: ${nextTime} (${CONFIG.checkIntervalMinutes}分钟后)`);
+      let extra = `(${CONFIG.checkIntervalMinutes}分钟后)`;
+      if (WINDOW_ON && START_MIN < END_MIN) {
+        const remMin = END_MIN - nowMin();
+        if (remMin > 0) extra += ` | 距当前查询窗口结束约${remMin}分钟`;
+      }
+      log(`├─ 下次: ${nextTime} ${extra}`);
       log(`└─ 等待中... (Ctrl+C 退出)`);
       await sleep(waitMs);
     }

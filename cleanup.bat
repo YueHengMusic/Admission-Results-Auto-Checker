@@ -34,6 +34,13 @@ if exist .email_tested (
 ) else (
     echo [--] .email_tested
 )
+if exist state.json (
+    del /q state.json
+    echo [OK] state.json
+    set /a DELETED+=1
+) else (
+    echo [--] state.json
+)
 if exist eng.traineddata (
     del /q eng.traineddata
     echo [OK] eng.traineddata
@@ -92,12 +99,34 @@ echo ============================================
 echo   清理完成！共删除 !DELETED! 个文件/目录
 echo ============================================
 echo.
-echo   温馨提示：
-echo     ddddocr 安装在系统 Python 中，未自动卸载。
-echo     如需卸载: pip uninstall ddddocr -y
+echo   以下项目未自动删除，请选择：
+echo     [1] 全部删除（ddddocr + Chromium）
+echo     [2] 仅删除 ddddocr
+echo     [3] 仅删除 Chromium
+echo     [4] 都不删除
 echo.
-echo     Playwright Chromium 可能影响其他项目，未自动删除。
-echo     如需清理: %USERPROFILE%\AppData\Local\ms-playwright
+set /p clean_choice="   输入序号 (1-4): "
+
+if "!clean_choice!"=="1" (
+    echo [..] 卸载 ddddocr...
+    !PYTHON_CMD! -m pip uninstall ddddocr -y >nul 2>&1 && echo [OK] ddddocr 已卸载 || echo [WARN] ddddocr 卸载失败
+    if exist "%USERPROFILE%\AppData\Local\ms-playwright" (
+        echo [..] 删除 Chromium...
+        rmdir /s /q "%USERPROFILE%\AppData\Local\ms-playwright" && echo [OK] Chromium 已删除 || echo [WARN] Chromium 删除失败
+    ) else (
+        echo [--] Chromium（未找到）
+    )
+) else if "!clean_choice!"=="2" (
+    echo [..] 卸载 ddddocr...
+    !PYTHON_CMD! -m pip uninstall ddddocr -y >nul 2>&1 && echo [OK] ddddocr 已卸载 || echo [WARN] ddddocr 卸载失败
+) else if "!clean_choice!"=="3" (
+    if exist "%USERPROFILE%\AppData\Local\ms-playwright" (
+        echo [..] 删除 Chromium...
+        rmdir /s /q "%USERPROFILE%\AppData\Local\ms-playwright" && echo [OK] Chromium 已删除 || echo [WARN] Chromium 删除失败
+    ) else (
+        echo [--] Chromium（未找到）
+    )
+)
 echo.
 echo   下次使用前请运行 setup.bat 重新部署
 echo.

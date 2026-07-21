@@ -1,29 +1,42 @@
 {
-  "___________________查询信息___________________": "",
+  "___________________基本信息___________________": "",
   "_examNumber": "准考证号（11位）或考生号（14位）",
   "examNumber": "12345678901",
   "_idLast4": "身份证号后4位",
   "idLast4": "1234",
-  "_checkIntervalMinutes": "查询间隔（分钟）。0 = 只查一次",
+
+  "___________________查询节奏___________________": "",
+  "_checkIntervalMinutes": "查询间隔（分钟），0 = 只查一次",
   "checkIntervalMinutes": 10,
-  "___________________OCR与限流___________________": "",
-  "_maxCaptchaRefetches": "每个查询周期最多刷新几次验证码（越大成功率越高但越慢）",
+  "_queryWindowEnabled": "是否启用查询时间段限制（true=仅在下方时间段内查询）",
+  "queryWindowEnabled": false,
+  "_queryStartHour": "查询开始时间，如 \"8:00\" 或 8.5",
+  "queryStartHour": "8:00",
+  "_queryEndHour": "查询结束时间，如 \"17:30\" 或 17.5。到点后完成当次再停",
+  "queryEndHour": "17:00",
+
+  "___________________验证码与OCR___________________": "",
+  "_maxCaptchaRefetches": "每个查询周期最多刷新几次验证码",
   "maxCaptchaRefetches": 5,
-  "_maxCandidatesPerCaptcha": "每张验证码最多尝试几个 OCR 候选（越大成功率越高但越慢）",
+  "_maxCandidatesPerCaptcha": "每张验证码最多尝试几个 OCR 候选",
   "maxCandidatesPerCaptcha": 4,
-  "_candidateDelayMs": "候选间延迟（毫秒）。太小会被限流",
+  "_candidateDelayMs": "候选间延迟（毫秒），太小会被限流",
   "candidateDelayMs": 3000,
   "_captchaRefetchDelayMs": "刷新验证码间延迟（毫秒）",
   "captchaRefetchDelayMs": 5000,
-  "___________________运行模式___________________": "",
-  "_headless": "是否隐藏浏览器窗口。true=后台运行, false=可见（调试用）",
+
+  "___________________浏览器___________________": "",
+  "_headless": "是否隐藏浏览器窗口，true = 后台运行, false = 可见（调试用）",
   "headless": true,
-  "_browserRestartQueries": "每N次查询后重启浏览器释放内存（0=不按次数重启）",
+  "_browserRestartQueries": "每 N 次查询后重启浏览器释放内存（0 = 不重启）",
   "browserRestartQueries": 50,
-  "_browserRestartHours": "或每N小时后重启浏览器（0=不按时间重启）",
+  "_browserRestartHours": "每 N 小时后重启浏览器（0 = 不按时重启）",
   "browserRestartHours": 6,
-  "_failureAlertThreshold": "连续N次查询失败发送告警邮件（0=不告警）",
+
+  "___________________告警___________________": "",
+  "_failureAlertThreshold": "连续 N 次查询失败发送告警邮件（0 = 不告警）",
   "failureAlertThreshold": 6,
+
   "___________________邮件通知___________________": "",
   "smtp": {
     "_enabled": "是否启用邮件通知",
@@ -46,6 +59,8 @@
     "_from": "发件人显示名称和地址",
     "from": "录取查询 <your-email@qq.com>",
     "_to": "收件人邮箱。多个用逗号分隔",
-    "to": "your-email@qq.com"
+    "to": "your-email@qq.com",
+    "_firstTimeEmail": "首次查询时是否发邮件（无论有无结果），关掉后只有状态变化才发",
+    "firstTimeEmail": true
   }
 }

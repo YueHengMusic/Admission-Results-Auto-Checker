@@ -33,6 +33,13 @@ if exist .email_tested (
 ) else (
     echo [--] .email_tested
 )
+if exist state.json (
+    del /q state.json
+    echo [OK] state.json
+    set /a DELETED+=1
+) else (
+    echo [--] state.json
+)
 if exist eng.traineddata (
     del /q eng.traineddata
     echo [OK] eng.traineddata

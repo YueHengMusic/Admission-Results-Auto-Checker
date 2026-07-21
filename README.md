@@ -45,12 +45,16 @@ npm start
   "examNumber": "12345678901",
   "idLast4": "1234",
   "checkIntervalMinutes": 10,
+  "queryWindowEnabled": false,
+  "queryStartHour": "8:00",
+  "queryEndHour": "17:00",
   "maxCaptchaRefetches": 5,
   "maxCandidatesPerCaptcha": 4,
   "candidateDelayMs": 3000,
   "captchaRefetchDelayMs": 5000,
   "headless": true,
   "browserRestartQueries": 50,
+  "browserRestartHours": 6,
   "failureAlertThreshold": 6,
 
   "smtp": {
@@ -63,7 +67,8 @@ npm start
       "pass": "your-auth-code"
     },
     "from": "录取查询 <your-email@qq.com>",
-    "to": "your-email@qq.com"
+    "to": "your-email@qq.com",
+    "firstTimeEmail": true
   }
 }
 ```
@@ -97,7 +102,7 @@ npm start
 
 ## 📧 邮件通知（SMTP）
 
-检测到录取结果后自动发送邮件，附带录取详情和页面截图。
+追踪录取状态变化，自动弹窗、发邮件、保存截图。
 
 ### 三种邮件
 
@@ -105,7 +110,9 @@ npm start
 |------|---------|------|
 | **测试邮件** | 首次查询成功后 | 考生姓名、准考证号、当前状态、运行配置 |
 | **状态变化** | 首次查到数据 / 状态跳变 | 旧状态→新状态 + 详情字段 |
-| **录取通知** | 检测到正式录取 | 考生状态、院校名称、专业名称等 **全部9个录取字段** + 页面截图附件 |
+| **录取通知** | 检测到正式录取 | 全部9个录取字段 + 页面截图附件 |
+
+> 💡 测试邮件和首次检测邮件可通过 `smtp.firstTimeEmail: false` 关闭。
 
 录取通知邮件示例：
 
@@ -165,7 +172,7 @@ node auto-checker.js --email-to=me@example.com       # 覆盖收件人
 
 > ⚠️ 授权码不是邮箱登录密码！QQ/163 等需要在邮箱设置中单独生成。
 >
-> 💡 首次查询成功后会自动发送测试邮件，包含考生姓名、当前状态和运行配置，一次性验证 SMTP + 查询 + 考生信息。修改 SMTP 配置后重新查询会再次发送。
+> 💡 首次查询成功后会自动发送测试邮件（可通过 `smtp.firstTimeEmail: false` 关闭），包含考生姓名、当前状态和运行配置，一次性验证 SMTP + 查询 + 考生信息。修改 SMTP 配置后重新查询会再次发送。
 
 ---
 
@@ -230,6 +237,7 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 | `package.json` | 依赖和 npm 脚本 |
 | `auto-checker.log` | 运行日志（自动生成） |
 | `session_cookies.json` | 浏览器会话（自动生成，用于恢复） |
+| `state.json` | 录取状态持久化（自动生成，用于重启后恢复） |
 | `results/` | 查询截图和 HTML（自动生成） |
 
 ---
@@ -245,6 +253,10 @@ node auto-checker.js --email-to=me@qq.com # 指定收件人
 → OCR(tesseract): "5EW"(40%), ...    ← 回退 tesseract
 ```
 安装方式：`pip install ddddocr`。
+
+### Q: 日志输出了哪些信息？
+
+每轮查询输出：标题行、OCR 引擎和识别结果、验证码验证状态、当前录取状态（含横幅和详情字段）、考生姓名、查询耗时。启动时显示 OCR 引擎可用性。每 10 轮追加 OCR 命中率和内存占用。开启查询时间段时还会显示窗口剩余时间。
 
 ### Q: 为什么提示"操作频繁，请稍后再试"？
 
@@ -273,13 +285,27 @@ Playwright 的 Chromium 需要系统共享库。运行 `npx playwright install-d
 **pip 未安装**：`setup.sh` 会自动执行 `apt-get install python3-pip`。
 **PEP 668 限制**：`setup.sh` 检测到后会自动加 `--break-system-packages` 重试。
 
+### Q: 如何配置只在特定时间段查询？
+
+在 `config.json` 中设置：
+```json
+"queryWindowEnabled": true,
+"queryStartHour": "8:00",
+"queryEndHour": "17:00"
+```
+开启后仅在 8:00 至 17:00 之间查询，到点完成当次后自动停止。支持 `"8:30"`、`8.5`、跨夜（如 `"22:00"` 至 `"6:00"`）等格式。
+
+### Q: 如何关闭首次查询时的邮件通知？
+
+设置 `smtp.firstTimeEmail: false`，关掉后只有状态变化时才发邮件，首次查不到数据和首次查到数据都不会发。
+
 ### Q: 程序出问题了怎么办？
 
 先试试双击 `cleanup-runtime.bat`（Windows）或运行 `bash cleanup-runtime.sh`（macOS/Linux）清理运行时垃圾，然后重新 `npm start`。如果还不行，用 `cleanup.bat` / `cleanup.sh` 彻底还原后再运行 `setup.bat` / `setup.sh` 重新部署。
 
 ### Q: 如何确认邮件配置是否正确？
 
-首次查询成功后会自动发送测试邮件，包含考生姓名、状态和配置。收到即说明一切正常。修改 SMTP 配置后重新查询会再次发送。
+首次查询成功后会自动发送测试邮件（可通过 `smtp.firstTimeEmail: false` 关闭），包含考生姓名、状态和配置。收到即说明一切正常。修改 SMTP 配置后重新查询会再次发送。
 
 ---
 
